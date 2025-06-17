@@ -1,0 +1,2 @@
+line_item_id,order_id,product_id,quantity,unit_price,discount_amount,line_total
+LI-35629224,ORD-8410875,PROD-898749,7,2926.46,465.96,32709.67

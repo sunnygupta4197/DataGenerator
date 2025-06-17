@@ -1,0 +1,2 @@
+product_id,category_id,product_name,price,cost,sku,stock_quantity,reorder_level,supplier_id,weight_kg,dimensions,is_active,created_date
+PROD-820789,6412943281460331595,Gaming Laptop Pro,4336.7,2377.08,SKU-4727393,9383,17,SUP-9371,14.93,76x0x9cm,False,2022-11-05

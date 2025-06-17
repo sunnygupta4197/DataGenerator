@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Generation System Workflow</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+
+        .workflow-section {
+            margin: 30px 0;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 5px solid;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .workflow-section:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .phase-1 { border-color: #3498db; background-color: #ebf3fd; }
+        .phase-2 { border-color: #e74c3c; background-color: #fdf2f2; }
+        .phase-3 { border-color: #f39c12; background-color: #fef9e7; }
+        .phase-4 { border-color: #27ae60; background-color: #eafaf1; }
+        .phase-5 { border-color: #9b59b6; background-color: #f4f1f8; }
+        .phase-6 { border-color: #34495e; background-color: #f8f9fa; }
+
+        .phase-title {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+
+        .phase-icon {
+            width: 30px;
+            height: 30px;
+            margin-right: 15px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .phase-1 .phase-icon { background-color: #3498db; }
+        .phase-2 .phase-icon { background-color: #e74c3c; }
+        .phase-3 .phase-icon { background-color: #f39c12; }
+        .phase-4 .phase-icon { background-color: #27ae60; }
+        .phase-5 .phase-icon { background-color: #9b59b6; }
+        .phase-6 .phase-icon { background-color: #34495e; }
+
+        .components {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .component {
+            background: rgba(255,255,255,0.8);
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+            transition: all 0.3s ease;
+        }
+
+        .component:hover {
+            background: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .component-name {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+
+        .component-desc {
+            font-size: 0.9em;
+            color: #666;
+            line-height: 1.4;
+        }
+
+        .flow-arrows {
+            text-align: center;
+            font-size: 2em;
+            color: #bdc3c7;
+            margin: 20px 0;
+        }
+
+        .faker-rules {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 30px 0;
+            border: 2px dashed #6c757d;
+        }
+
+        .rule-category {
+            margin: 15px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+            border-left: 4px solid #17a2b8;
+        }
+
+        .rule-category h4 {
+            margin: 0 0 10px 0;
+            color: #17a2b8;
+        }
+
+        .rule-examples {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .rule-tag {
+            background: #e9ecef;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            color: #495057;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+
+        .metric-card:hover {
+            transform: scale(1.05);
+        }
+
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .metric-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        .active-phase {
+            animation: pulse 2s infinite;
+        }
+
+        .toggle-button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-button:hover {
+            background: #2980b9;
+            transform: translateY(-1px);
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Enhanced Data Generation System Workflow</h1>
+
+        <div class="metrics">
+            <div class="metric-card">
+                <div class="metric-value">6</div>
+                <div class="metric-label">Core Phases</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">15+</div>
+                <div class="metric-label">Components</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">50+</div>
+                <div class="metric-label">Faker Rules</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">4</div>
+                <div class="metric-label">Output Formats</div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin: 20px 0;">
+            <button class="toggle-button" onclick="showAllPhases()">Show All Phases</button>
+            <button class="toggle-button" onclick="animateWorkflow()">Animate Workflow</button>
+            <button class="toggle-button" onclick="showFakerRules()">Show Faker Rules</button>
+        </div>
+
+        <!-- Phase 1: Configuration & Initialization -->
+        <div class="workflow-section phase-1" onclick="toggleDetails(this)">
+            <div class="phase-title">
+                <div class="phase-icon">1</div>
+                Configuration & Initialization Phase
+            </div>
+            <div class="components">
+                <div class="component">
+                    <div class="component-name">📋 ConfigurationManager</div>
+                    <div class="component-desc">Loads and manages configuration files with environment-specific overrides and validation</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">📖 JSONConfigReader</div>
+                    <div class="component-desc">Reads JSON configuration files, handles legacy format conversion, and processes file-based choices</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">✅ SchemaValidator</div>
+                    <div class="component-desc">Validates schema structure, applies auto-corrections, and ensures data integrity</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrows">⬇️</div>
+
+        <!-- Phase 2: Engine Setup -->
+        <div class="workflow-section phase-2" onclick="toggleDetails(this)">
+            <div class="phase-title">
+                <div class="phase-icon">2</div>
+                Engine Setup & Component Initialization
+            </div>
+            <div class="components">
+                <div class="component">
+                    <div class="component-name">🎛️ OptimizedDataGenerationEngine</div>
+                    <div class="component-desc">Main orchestrator that coordinates all generation activities and manages component lifecycle</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">⚡ ParallelDataGenerator</div>
+                    <div class="component-desc">High-performance generator supporting streaming, parallel, and adaptive generation strategies</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🔒 SecurityManager</div>
+                    <div class="component-desc">Handles data masking, encryption, and audit trail creation for sensitive data</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">📊 DataQualityAnalyzer</div>
+                    <div class="component-desc">Performs statistical analysis, anomaly detection, and business rule validation</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrows">⬇️</div>
+
+        <!-- Phase 3: Table Processing -->
+        <div class="workflow-section phase-3" onclick="toggleDetails(this)">
+            <div class="phase-title">
+                <div class="phase-icon">3</div>
+                Table Processing & Strategy Selection
+            </div>
+            <div class="components">
+                <div class="component">
+                    <div class="component-name">🔗 Dependency Resolution</div>
+                    <div class="component-desc">Orders tables based on foreign key relationships to ensure proper data generation sequence</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🧠 Strategy Selection</div>
+                    <div class="component-desc">Chooses optimal generation strategy: Streaming (>100K), Parallel (>10K), or Adaptive</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">💾 Memory Analysis</div>
+                    <div class="component-desc">Estimates memory requirements and configures memory management for optimal performance</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrows">⬇️</div>
+
+        <!-- Phase 4: Data Generation -->
+        <div class="workflow-section phase-4" onclick="toggleDetails(this)">
+            <div class="phase-title">
+                <div class="phase-icon">4</div>
+                Core Data Generation & Value Creation
+            </div>
+            <div class="components">
+                <div class="component">
+                    <div class="component-name">🎲 ValueGenerator</div>
+                    <div class="component-desc">Processes faker rules, integrates with OpenAI, and generates values based on complex rule definitions</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🔐 OptimizedConstraintManager</div>
+                    <div class="component-desc">Manages unique values, primary keys, foreign key relationships, and constraint validation with memory optimization</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🎯 BatchGenerator</div>
+                    <div class="component-desc">Generates data in optimized batches with global record indexing and constraint enforcement</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🤖 OpenAI Integration</div>
+                    <div class="component-desc">Generates AI-powered synthetic data using OpenAI API with caching and cost management</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrows">⬇️</div>
+
+        <!-- Phase 5: Quality & Security -->
+        <div class="workflow-section phase-5" onclick="toggleDetails(this)">
+            <div class="phase-title">
+                <div class="phase-icon">5</div>
+                Quality Assurance & Security Processing
+            </div>
+            <div class="components">
+                <div class="component">
+                    <div class="component-name">🔍 UnifiedValidator</div>
+                    <div class="component-desc">Consolidated validation system with regex patterns, data type checking, and business rule validation</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">📈 Quality Analysis</div>
+                    <div class="component-desc">Statistical distribution analysis, anomaly detection, and data quality scoring</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🛡️ Data Masking</div>
+                    <div class="component-desc">Applies configurable masking rules for PII and sensitive data protection</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🔒 Encryption & Audit</div>
+                    <div class="component-desc">Field-level encryption and comprehensive audit trail generation for compliance</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-arrows">⬇️</div>
+
+        <!-- Phase 6: Output & Reporting -->
+        <div class="workflow-section phase-6" onclick="toggleDetails(this)">
+            <div class="phase-title">
+                <div class="phase-icon">6</div>
+                Output Generation & Reporting
+            </div>
+            <div class="components">
+                <div class="component">
+                    <div class="component-name">📝 StreamingWriters</div>
+                    <div class="component-desc">Format-agnostic writers for CSV, JSON, Parquet, Excel with compression support</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">📊 Performance Reports</div>
+                    <div class="component-desc">Detailed performance metrics, memory usage, and generation statistics</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🔍 Quality Reports</div>
+                    <div class="component-desc">Data quality scores, validation results, and quality improvement recommendations</div>
+                </div>
+                <div class="component">
+                    <div class="component-name">🔐 Security Reports</div>
+                    <div class="component-desc">Security audit trails, masking operations, and compliance documentation</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Faker Rules Section -->
+        <div id="faker-rules" class="faker-rules hidden">
+            <h2>🎲 Comprehensive Faker Rules Catalog</h2>
+
+            <div class="rule-category">
+                <h4>📝 String-Based Simple Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">email</span>
+                    <span class="rule-tag">phone</span>
+                    <span class="rule-tag">firstname</span>
+                    <span class="rule-tag">lastname</span>
+                    <span class="rule-tag">name</span>
+                    <span class="rule-tag">address</span>
+                    <span class="rule-tag">city</span>
+                    <span class="rule-tag">uuid</span>
+                    <span class="rule-tag">text</span>
+                    <span class="rule-tag">timestamp</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>💳 Financial & Identity Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">cc (credit_card)</span>
+                    <span class="rule-tag">cc_cvv</span>
+                    <span class="rule-tag">cc_expiry_date</span>
+                    <span class="rule-tag">ssn</span>
+                    <span class="rule-tag">zipcode</span>
+                    <span class="rule-tag">ip_address</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>🎯 Choice & Selection Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">{"type": "choice", "value": [...]}</span>
+                    <span class="rule-tag">{"type": "choice_from_file"}</span>
+                    <span class="rule-tag">Weighted probabilities</span>
+                    <span class="rule-tag">Dynamic choices</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>📊 Numeric & Range Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">{"type": "range", "min": X, "max": Y}</span>
+                    <span class="rule-tag">{"type": "sequence"}</span>
+                    <span class="rule-tag">Integer ranges</span>
+                    <span class="rule-tag">Float ranges</span>
+                    <span class="rule-tag">Incremental sequences</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>📅 Date & Time Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">{"type": "date_range"}</span>
+                    <span class="rule-tag">{"type": "time_range"}</span>
+                    <span class="rule-tag">{"type": "timestamp_range"}</span>
+                    <span class="rule-tag">Custom date formats</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>🏷️ Prefix & Suffix Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">{"prefix": "CUST-", "type": "range"}</span>
+                    <span class="rule-tag">{"suffix": "-V1", "type": "uuid"}</span>
+                    <span class="rule-tag">Combined prefix+suffix</span>
+                    <span class="rule-tag">Format preservation</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>🎨 Pattern & Regex Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">{"type": "regex", "pattern": "..."}</span>
+                    <span class="rule-tag">Email with domain restriction</span>
+                    <span class="rule-tag">Phone with country format</span>
+                    <span class="rule-tag">Custom validation patterns</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>🔗 Conditional & Advanced Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">{"conditional_rules": [...]}</span>
+                    <span class="rule-tag">When-then logic</span>
+                    <span class="rule-tag">Cross-column dependencies</span>
+                    <span class="rule-tag">Business rule validation</span>
+                </div>
+            </div>
+
+            <div class="rule-category">
+                <h4>🤖 AI-Generated Rules</h4>
+                <div class="rule-examples">
+                    <span class="rule-tag">{"type": "openai_generated"}</span>
+                    <span class="rule-tag">Context-aware generation</span>
+                    <span class="rule-tag">Custom descriptions</span>
+                    <span class="rule-tag">Cost-controlled caching</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Key Features Summary -->
+        <div class="workflow-section" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin-top: 40px;">
+            <div class="phase-title" style="color: white;">
+                <div class="phase-icon" style="background: rgba(255,255,255,0.2);">✨</div>
+                Key System Features
+            </div>
+            <div class="components">
+                <div class="component" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white;">
+                    <div class="component-name" style="color: white;">🚀 Performance Optimized</div>
+                    <div class="component-desc" style="color: rgba(255,255,255,0.9);">Multi-threaded/process generation, memory management, and adaptive strategies</div>
+                </div>
+                <div class="component" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white;">
+                    <div class="component-name" style="color: white;">🔒 Enterprise Security</div>
+                    <div class="component-desc" style="color: rgba(255,255,255,0.9);">Data masking, encryption, audit trails, and compliance-ready features</div>
+                </div>
+                <div class="component" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white;">
+                    <div class="component-name" style="color: white;">📊 Quality Assured</div>
+                    <div class="component-desc" style="color: rgba(255,255,255,0.9);">Statistical analysis, anomaly detection, and comprehensive validation</div>
+                </div>
+                <div class="component" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white;">
+                    <div class="component-name" style="color: white;">🎛️ Highly Configurable</div>
+                    <div class="component-desc" style="color: rgba(255,255,255,0.9);">50+ faker rules, environment-specific configs, and extensive customization</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleDetails(element) {
+            const components = element.querySelector('.components');
+            if (components.style.display === 'none') {
+                components.style.display = 'grid';
+                element.style.background = element.style.background.replace('0.8', '0.9');
+            } else {
+                components.style.display = 'none';
+                element.style.background = element.style.background.replace('0.9', '0.8');
+            }
+        }
+
+        function showAllPhases() {
+            const phases = document.querySelectorAll('.workflow-section .components');
+            phases.forEach(phase => {
+                phase.style.display = 'grid';
+            });
+        }
+
+        function animateWorkflow() {
+            const phases = document.querySelectorAll('.workflow-section');
+            phases.forEach((phase, index) => {
+                setTimeout(() => {
+                    phase.classList.add('active-phase');
+                    setTimeout(() => {
+                        phase.classList.remove('active-phase');
+                    }, 1500);
+                }, index * 800);
+            });
+        }
+
+        function showFakerRules() {
+            const rulesSection = document.getElementById('faker-rules');
+            rulesSection.classList.toggle('hidden');
+        }
+
+        // Initialize with first phase expanded
+        document.addEventListener('DOMContentLoaded', function() {
+            const firstPhase = document.querySelector('.workflow-section .components');
+            if (firstPhase) {
+                firstPhase.style.display = 'grid';
+            }
+        });
+
+        // Add hover effects for better interactivity
+        document.addEventListener('DOMContentLoaded', function() {
+            const components = document.querySelectorAll('.component');
+            components.forEach(component => {
+                component.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-3px) scale(1.02)';
+                });
+                component.addEventListener('mouseleave', function() {
+                    this.style.transform = 'translateY(0) scale(1)';
+                });
+            });
+        });
+    </script>
+</body>
+</html>

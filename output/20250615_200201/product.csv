@@ -1,0 +1,2 @@
+product_id,category_id,product_name,price,cost,sku,stock_quantity,reorder_level,supplier_id,weight_kg,dimensions,is_active,created_date
+PROD-123459,2161561029790519043,Memory Foam Pillow,3660.18,822.99,SKU-8502087,3814,60,SUP-3088,22.39,649x404x248cm,False,2022-06-27

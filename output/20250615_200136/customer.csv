@@ -1,0 +1,2 @@
+customer_id,address_id,first_name,last_name,email,phone_number,date_of_birth,registration_date,age,income,gender,customer_status,loyalty_tier,credit_score,marketing_opt_in,created_at,updated_at,notes
+738982,3529bd42-334e-4d64-9321-c128d4fb61ee,Ronald,Allen,h********************g,+*************1,1965-08-25,2022-02-21,84,304024.07,Male,ACTIVE,BRONZE,732,False,2024-02-16 04:00:04,2020-10-08 20:55:44,Payment issues resolved

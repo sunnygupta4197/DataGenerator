@@ -1,0 +1,2 @@
+order_id,customer_id,shipping_address_id,billing_address_id,order_date,order_time,status,subtotal,tax_amount,shipping_cost,total_amount,payment_method,notes
+ORD-8410875,738982,3529bd42-334e-4d64-9321-c128d4fb61ee,3529bd42-334e-4d64-9321-c128d4fb61ee,2024-11-08,09:00:00,CONFIRMED,658.29,185.05,42.81,4502.5,DEBIT_CARD,Fragile items

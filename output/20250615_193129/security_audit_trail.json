@@ -1,0 +1,132 @@
+[
+  {
+    "audit_id": "3559f592-9d53-48f8-9e2c-56f801533401",
+    "timestamp": "2025-06-15T19:35:10.942719",
+    "event_type": "data_generation",
+    "generation_params": {
+      "table": "address",
+      "security_enabled": true,
+      "masking_rules": 6
+    },
+    "records_generated": 100000,
+    "sensitive_columns": [],
+    "user": "unknown",
+    "hostname": "unknown",
+    "pid": 37760,
+    "compliance_level": "HIGH_RISK",
+    "security_measures_applied": {
+      "masking_enabled": true,
+      "encryption_enabled": false,
+      "custom_rules_count": 6
+    }
+  },
+  {
+    "audit_id": "cab9de5b-2580-4582-8032-169d76947497",
+    "timestamp": "2025-06-15T19:37:05.574282",
+    "event_type": "data_generation",
+    "generation_params": {
+      "table": "customer",
+      "security_enabled": true,
+      "masking_rules": 6
+    },
+    "records_generated": 100000,
+    "sensitive_columns": [
+      "email",
+      "phone_number",
+      "date_of_birth"
+    ],
+    "user": "unknown",
+    "hostname": "unknown",
+    "pid": 37760,
+    "compliance_level": "LOW_RISK",
+    "security_measures_applied": {
+      "masking_enabled": true,
+      "encryption_enabled": false,
+      "custom_rules_count": 6
+    }
+  },
+  {
+    "audit_id": "f952cdf8-1444-495e-ad9c-16a3ccf5ce67",
+    "timestamp": "2025-06-15T19:37:14.023293",
+    "event_type": "data_generation",
+    "generation_params": {
+      "table": "product_category",
+      "security_enabled": true,
+      "masking_rules": 6
+    },
+    "records_generated": 100000,
+    "sensitive_columns": [],
+    "user": "unknown",
+    "hostname": "unknown",
+    "pid": 37760,
+    "compliance_level": "LOW_RISK",
+    "security_measures_applied": {
+      "masking_enabled": true,
+      "encryption_enabled": false,
+      "custom_rules_count": 6
+    }
+  },
+  {
+    "audit_id": "12e5bcef-87bc-43f6-970c-c0b87b19ed7a",
+    "timestamp": "2025-06-15T19:37:59.589346",
+    "event_type": "data_generation",
+    "generation_params": {
+      "table": "product",
+      "security_enabled": true,
+      "masking_rules": 6
+    },
+    "records_generated": 100000,
+    "sensitive_columns": [],
+    "user": "unknown",
+    "hostname": "unknown",
+    "pid": 37760,
+    "compliance_level": "LOW_RISK",
+    "security_measures_applied": {
+      "masking_enabled": true,
+      "encryption_enabled": false,
+      "custom_rules_count": 6
+    }
+  },
+  {
+    "audit_id": "55626e11-1bf8-4357-bec8-78017de2a80e",
+    "timestamp": "2025-06-15T19:38:40.277932",
+    "event_type": "data_generation",
+    "generation_params": {
+      "table": "order_header",
+      "security_enabled": true,
+      "masking_rules": 6
+    },
+    "records_generated": 100000,
+    "sensitive_columns": [],
+    "user": "unknown",
+    "hostname": "unknown",
+    "pid": 37760,
+    "compliance_level": "LOW_RISK",
+    "security_measures_applied": {
+      "masking_enabled": true,
+      "encryption_enabled": false,
+      "custom_rules_count": 6
+    }
+  },
+  {
+    "audit_id": "989bc2cd-cf1f-4b44-a721-3376ad63d628",
+    "timestamp": "2025-06-15T19:39:03.782843",
+    "event_type": "data_generation",
+    "generation_params": {
+      "table": "order_line_item",
+      "security_enabled": true,
+      "masking_rules": 6
+    },
+    "records_generated": 100000,
+    "sensitive_columns": [],
+    "user": "unknown",
+    "hostname": "unknown",
+    "pid": 37760,
+    "compliance_level": "LOW_RISK",
+    "security_measures_applied": {
+      "masking_enabled": true,
+      "encryption_enabled": false,
+      "custom_rules_count": 6
+    }
+  }
+]

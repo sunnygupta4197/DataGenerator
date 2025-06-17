@@ -1,0 +1,833 @@
+{
+  "generation_timestamp": "2025-06-15T20:01:38.003530",
+  "generator_type": "ParallelDataGenerator",
+  "configuration_summary": {
+    "total_tables": 6,
+    "records_per_table": 1,
+    "output_format": "csv",
+    "max_workers": 8,
+    "streaming_enabled": true,
+    "parallel_enabled": true,
+    "quality_analysis_enabled": true,
+    "security_enabled": true,
+    "business_rules_enabled": true,
+    "anomaly_detection_enabled": true
+  },
+  "performance_summary": {
+    "total_duration_seconds": 1.046859,
+    "total_records_generated": 6,
+    "average_records_per_second": 5.731430880376441,
+    "peak_memory_usage_mb": 109.72265625,
+    "current_memory_usage_mb": 109.72265625,
+    "tables_processed": 6,
+    "memory_cleanups_performed": 0,
+    "errors_encountered": 0
+  },
+  "quality_metrics": {
+    "average_quality_score": 1.0,
+    "quality_by_table": {
+      "address": 1.0,
+      "customer": 1.0,
+      "product_category": 1.0,
+      "product": 1.0,
+      "order_header": 1.0,
+      "order_line_item": 1.0
+    },
+    "total_quality_checks": 6
+  },
+  "security_metrics": {
+    "security_operations_performed": 0,
+    "masking_enabled": true,
+    "encryption_enabled": false,
+    "audit_records_created": 6
+  },
+  "performance_profiling": {
+    "timestamp": 1749997898.0034866,
+    "operations": {
+      "table_address_generation": {
+        "call_count": 1,
+        "total_duration_seconds": 0.005613803863525391,
+        "average_duration_seconds": 0.005613803863525391,
+        "min_duration_seconds": 0.005613803863525391,
+        "max_duration_seconds": 0.005613803863525391,
+        "average_memory_delta_mb": 0.28515625,
+        "min_memory_delta_mb": 0.28515625,
+        "max_memory_delta_mb": 0.28515625,
+        "calls_per_second": 178.13233670262466
+      },
+      "table_address_quality_analysis": {
+        "call_count": 1,
+        "total_duration_seconds": 0.01342153549194336,
+        "average_duration_seconds": 0.01342153549194336,
+        "min_duration_seconds": 0.01342153549194336,
+        "max_duration_seconds": 0.01342153549194336,
+        "average_memory_delta_mb": 0.4921875,
+        "min_memory_delta_mb": 0.4921875,
+        "max_memory_delta_mb": 0.4921875,
+        "calls_per_second": 74.50712331687214
+      },
+      "table_address_security_processing": {
+        "call_count": 1,
+        "total_duration_seconds": 0.0001125335693359375,
+        "average_duration_seconds": 0.0001125335693359375,
+        "min_duration_seconds": 0.0001125335693359375,
+        "max_duration_seconds": 0.0001125335693359375,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 8886.237288135593
+      },
+      "table_address_business_rules": {
+        "call_count": 1,
+        "total_duration_seconds": 2.09808349609375e-05,
+        "average_duration_seconds": 2.09808349609375e-05,
+        "min_duration_seconds": 2.09808349609375e-05,
+        "max_duration_seconds": 2.09808349609375e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 47662.545454545456
+      },
+      "table_address_anomaly_detection": {
+        "call_count": 1,
+        "total_duration_seconds": 0.001649618148803711,
+        "average_duration_seconds": 0.001649618148803711,
+        "min_duration_seconds": 0.001649618148803711,
+        "max_duration_seconds": 0.001649618148803711,
+        "average_memory_delta_mb": 0.09765625,
+        "min_memory_delta_mb": 0.09765625,
+        "max_memory_delta_mb": 0.09765625,
+        "calls_per_second": 606.2008960832491
+      },
+      "table_customer_generation": {
+        "call_count": 1,
+        "total_duration_seconds": 0.0043528079986572266,
+        "average_duration_seconds": 0.0043528079986572266,
+        "min_duration_seconds": 0.0043528079986572266,
+        "max_duration_seconds": 0.0043528079986572266,
+        "average_memory_delta_mb": 0.1484375,
+        "min_memory_delta_mb": 0.1484375,
+        "max_memory_delta_mb": 0.1484375,
+        "calls_per_second": 229.73675850358765
+      },
+      "table_customer_quality_analysis": {
+        "call_count": 1,
+        "total_duration_seconds": 0.026260852813720703,
+        "average_duration_seconds": 0.026260852813720703,
+        "min_duration_seconds": 0.026260852813720703,
+        "max_duration_seconds": 0.026260852813720703,
+        "average_memory_delta_mb": 0.5859375,
+        "min_memory_delta_mb": 0.5859375,
+        "max_memory_delta_mb": 0.5859375,
+        "calls_per_second": 38.07949448913261
+      },
+      "table_customer_security_processing": {
+        "call_count": 1,
+        "total_duration_seconds": 0.00015807151794433594,
+        "average_duration_seconds": 0.00015807151794433594,
+        "min_duration_seconds": 0.00015807151794433594,
+        "max_duration_seconds": 0.00015807151794433594,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 6326.250377073907
+      },
+      "table_customer_business_rules": {
+        "call_count": 1,
+        "total_duration_seconds": 2.2411346435546875e-05,
+        "average_duration_seconds": 2.2411346435546875e-05,
+        "min_duration_seconds": 2.2411346435546875e-05,
+        "max_duration_seconds": 2.2411346435546875e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 44620.255319148935
+      },
+      "table_customer_anomaly_detection": {
+        "call_count": 1,
+        "total_duration_seconds": 0.004069089889526367,
+        "average_duration_seconds": 0.004069089889526367,
+        "min_duration_seconds": 0.004069089889526367,
+        "max_duration_seconds": 0.004069089889526367,
+        "average_memory_delta_mb": 0.0234375,
+        "min_memory_delta_mb": 0.0234375,
+        "max_memory_delta_mb": 0.0234375,
+        "calls_per_second": 245.75520009374816
+      },
+      "table_product_category_generation": {
+        "call_count": 1,
+        "total_duration_seconds": 0.0026395320892333984,
+        "average_duration_seconds": 0.0026395320892333984,
+        "min_duration_seconds": 0.0026395320892333984,
+        "max_duration_seconds": 0.0026395320892333984,
+        "average_memory_delta_mb": 0.01171875,
+        "min_memory_delta_mb": 0.01171875,
+        "max_memory_delta_mb": 0.01171875,
+        "calls_per_second": 378.85502664619275
+      },
+      "table_product_category_quality_analysis": {
+        "call_count": 1,
+        "total_duration_seconds": 0.005601644515991211,
+        "average_duration_seconds": 0.005601644515991211,
+        "min_duration_seconds": 0.005601644515991211,
+        "max_duration_seconds": 0.005601644515991211,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 178.5190040434135
+      },
+      "table_product_category_security_processing": {
+        "call_count": 1,
+        "total_duration_seconds": 9.608268737792969e-05,
+        "average_duration_seconds": 9.608268737792969e-05,
+        "min_duration_seconds": 9.608268737792969e-05,
+        "max_duration_seconds": 9.608268737792969e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 10407.70223325062
+      },
+      "table_product_category_business_rules": {
+        "call_count": 1,
+        "total_duration_seconds": 2.1219253540039062e-05,
+        "average_duration_seconds": 2.1219253540039062e-05,
+        "min_duration_seconds": 2.1219253540039062e-05,
+        "max_duration_seconds": 2.1219253540039062e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 47127.011235955055
+      },
+      "table_product_category_anomaly_detection": {
+        "call_count": 1,
+        "total_duration_seconds": 0.0012125968933105469,
+        "average_duration_seconds": 0.0012125968933105469,
+        "min_duration_seconds": 0.0012125968933105469,
+        "max_duration_seconds": 0.0012125968933105469,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 824.6763664962642
+      },
+      "table_product_generation": {
+        "call_count": 1,
+        "total_duration_seconds": 0.0019321441650390625,
+        "average_duration_seconds": 0.0019321441650390625,
+        "min_duration_seconds": 0.0019321441650390625,
+        "max_duration_seconds": 0.0019321441650390625,
+        "average_memory_delta_mb": 0.00390625,
+        "min_memory_delta_mb": 0.00390625,
+        "max_memory_delta_mb": 0.00390625,
+        "calls_per_second": 517.5597235932872
+      },
+      "table_product_quality_analysis": {
+        "call_count": 1,
+        "total_duration_seconds": 0.021008729934692383,
+        "average_duration_seconds": 0.021008729934692383,
+        "min_duration_seconds": 0.021008729934692383,
+        "max_duration_seconds": 0.021008729934692383,
+        "average_memory_delta_mb": 0.02734375,
+        "min_memory_delta_mb": 0.02734375,
+        "max_memory_delta_mb": 0.02734375,
+        "calls_per_second": 47.599260074673445
+      },
+      "table_product_security_processing": {
+        "call_count": 1,
+        "total_duration_seconds": 8.869171142578125e-05,
+        "average_duration_seconds": 8.869171142578125e-05,
+        "min_duration_seconds": 8.869171142578125e-05,
+        "max_duration_seconds": 8.869171142578125e-05,
+        "average_memory_delta_mb": 0.00390625,
+        "min_memory_delta_mb": 0.00390625,
+        "max_memory_delta_mb": 0.00390625,
+        "calls_per_second": 11275.010752688173
+      },
+      "table_product_business_rules": {
+        "call_count": 1,
+        "total_duration_seconds": 1.6927719116210938e-05,
+        "average_duration_seconds": 1.6927719116210938e-05,
+        "min_duration_seconds": 1.6927719116210938e-05,
+        "max_duration_seconds": 1.6927719116210938e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 59074.704225352114
+      },
+      "table_product_anomaly_detection": {
+        "call_count": 1,
+        "total_duration_seconds": 0.003022432327270508,
+        "average_duration_seconds": 0.003022432327270508,
+        "min_duration_seconds": 0.003022432327270508,
+        "max_duration_seconds": 0.003022432327270508,
+        "average_memory_delta_mb": 0.0078125,
+        "min_memory_delta_mb": 0.0078125,
+        "max_memory_delta_mb": 0.0078125,
+        "calls_per_second": 330.85935158160447
+      },
+      "table_order_header_generation": {
+        "call_count": 1,
+        "total_duration_seconds": 0.001085042953491211,
+        "average_duration_seconds": 0.001085042953491211,
+        "min_duration_seconds": 0.001085042953491211,
+        "max_duration_seconds": 0.001085042953491211,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 921.6225005493299
+      },
+      "table_order_header_quality_analysis": {
+        "call_count": 1,
+        "total_duration_seconds": 0.014435052871704102,
+        "average_duration_seconds": 0.014435052871704102,
+        "min_duration_seconds": 0.014435052871704102,
+        "max_duration_seconds": 0.014435052871704102,
+        "average_memory_delta_mb": 0.01171875,
+        "min_memory_delta_mb": 0.01171875,
+        "max_memory_delta_mb": 0.01171875,
+        "calls_per_second": 69.27581137996532
+      },
+      "table_order_header_security_processing": {
+        "call_count": 1,
+        "total_duration_seconds": 8.511543273925781e-05,
+        "average_duration_seconds": 8.511543273925781e-05,
+        "min_duration_seconds": 8.511543273925781e-05,
+        "max_duration_seconds": 8.511543273925781e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 11748.750700280112
+      },
+      "table_order_header_business_rules": {
+        "call_count": 1,
+        "total_duration_seconds": 1.6450881958007812e-05,
+        "average_duration_seconds": 1.6450881958007812e-05,
+        "min_duration_seconds": 1.6450881958007812e-05,
+        "max_duration_seconds": 1.6450881958007812e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 60787.014492753624
+      },
+      "table_order_header_anomaly_detection": {
+        "call_count": 1,
+        "total_duration_seconds": 0.002252340316772461,
+        "average_duration_seconds": 0.002252340316772461,
+        "min_duration_seconds": 0.002252340316772461,
+        "max_duration_seconds": 0.002252340316772461,
+        "average_memory_delta_mb": 0.00390625,
+        "min_memory_delta_mb": 0.00390625,
+        "max_memory_delta_mb": 0.00390625,
+        "calls_per_second": 443.9826399915317
+      },
+      "table_order_line_item_generation": {
+        "call_count": 1,
+        "total_duration_seconds": 0.0007121562957763672,
+        "average_duration_seconds": 0.0007121562957763672,
+        "min_duration_seconds": 0.0007121562957763672,
+        "max_duration_seconds": 0.0007121562957763672,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 1404.186139939739
+      },
+      "table_order_line_item_quality_analysis": {
+        "call_count": 1,
+        "total_duration_seconds": 0.009967327117919922,
+        "average_duration_seconds": 0.009967327117919922,
+        "min_duration_seconds": 0.009967327117919922,
+        "max_duration_seconds": 0.009967327117919922,
+        "average_memory_delta_mb": 0.00390625,
+        "min_memory_delta_mb": 0.00390625,
+        "max_memory_delta_mb": 0.00390625,
+        "calls_per_second": 100.32779983734392
+      },
+      "table_order_line_item_security_processing": {
+        "call_count": 1,
+        "total_duration_seconds": 8.440017700195312e-05,
+        "average_duration_seconds": 8.440017700195312e-05,
+        "min_duration_seconds": 8.440017700195312e-05,
+        "max_duration_seconds": 8.440017700195312e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 11848.316384180791
+      },
+      "table_order_line_item_business_rules": {
+        "call_count": 1,
+        "total_duration_seconds": 1.6927719116210938e-05,
+        "average_duration_seconds": 1.6927719116210938e-05,
+        "min_duration_seconds": 1.6927719116210938e-05,
+        "max_duration_seconds": 1.6927719116210938e-05,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 59074.704225352114
+      },
+      "table_order_line_item_anomaly_detection": {
+        "call_count": 1,
+        "total_duration_seconds": 0.0013930797576904297,
+        "average_duration_seconds": 0.0013930797576904297,
+        "min_duration_seconds": 0.0013930797576904297,
+        "max_duration_seconds": 0.0013930797576904297,
+        "average_memory_delta_mb": 0.0,
+        "min_memory_delta_mb": 0.0,
+        "max_memory_delta_mb": 0.0,
+        "calls_per_second": 717.8339893890125
+      }
+    }
+  },
+  "constraint_manager_performance": {
+    "pk_cache_size": 6,
+    "unique_cache_size": 2,
+    "fk_pools_count": 5,
+    "one_to_one_relationships": 0,
+    "one_to_many_relationships": 0,
+    "total_fk_values": 5,
+    "performance_stats": {
+      "cache_hits": 0,
+      "cache_misses": 0,
+      "memory_cleanups": 0,
+      "parallel_operations": 0,
+      "condition_evaluations": 3,
+      "type_conversions": 4,
+      "constraint_checks": 0
+    },
+    "cache_hit_ratio": 0
+  },
+  "parallel_generator_performance": {
+    "total_records_generated": 6,
+    "batches_processed": 0,
+    "parallel_tasks_completed": 6,
+    "memory_cleanups": 0,
+    "generation_time": 0.0,
+    "memory_usage_mb": 109.72265625,
+    "max_memory_mb": 4000,
+    "records_per_second": 0,
+    "average_batch_time": 0,
+    "data_generator_stats": {
+      "pk_cache_size": 6,
+      "unique_cache_size": 2,
+      "fk_pools_count": 5,
+      "one_to_one_relationships": 0,
+      "one_to_many_relationships": 0,
+      "total_fk_values": 5,
+      "performance_stats": {
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "memory_cleanups": 0,
+        "parallel_operations": 0,
+        "condition_evaluations": 3,
+        "type_conversions": 4,
+        "constraint_checks": 0
+      },
+      "cache_hit_ratio": 0
+    }
+  },
+  "detailed_statistics": {
+    "generation_summary": {
+      "tables_processed": 6,
+      "total_records_generated": 6,
+      "total_duration": 0.016807,
+      "memory_peak_mb": 109.72265625,
+      "quality_scores": {
+        "address": 1.0,
+        "customer": 1.0,
+        "product_category": 1.0,
+        "product": 1.0,
+        "order_header": 1.0,
+        "order_line_item": 1.0
+      },
+      "security_operations": 0,
+      "performance_profiles": {},
+      "errors": []
+    },
+    "parallel_generator_performance": {
+      "total_records_generated": 6,
+      "batches_processed": 0,
+      "parallel_tasks_completed": 6,
+      "memory_cleanups": 0,
+      "generation_time": 0.0,
+      "memory_usage_mb": 109.72265625,
+      "max_memory_mb": 4000,
+      "records_per_second": 0,
+      "average_batch_time": 0,
+      "data_generator_stats": {
+        "pk_cache_size": 6,
+        "unique_cache_size": 2,
+        "fk_pools_count": 5,
+        "one_to_one_relationships": 0,
+        "one_to_many_relationships": 0,
+        "total_fk_values": 5,
+        "performance_stats": {
+          "cache_hits": 0,
+          "cache_misses": 0,
+          "memory_cleanups": 0,
+          "parallel_operations": 0,
+          "condition_evaluations": 3,
+          "type_conversions": 4,
+          "constraint_checks": 0
+        },
+        "cache_hit_ratio": 0
+      }
+    },
+    "constraint_manager_performance": {
+      "pk_cache_size": 6,
+      "unique_cache_size": 2,
+      "fk_pools_count": 5,
+      "one_to_one_relationships": 0,
+      "one_to_many_relationships": 0,
+      "total_fk_values": 5,
+      "performance_stats": {
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "memory_cleanups": 0,
+        "parallel_operations": 0,
+        "condition_evaluations": 3,
+        "type_conversions": 4,
+        "constraint_checks": 0
+      },
+      "cache_hit_ratio": 0
+    },
+    "performance_profiling": {
+      "timestamp": 1749997898.0034866,
+      "operations": {
+        "table_address_generation": {
+          "call_count": 1,
+          "total_duration_seconds": 0.005613803863525391,
+          "average_duration_seconds": 0.005613803863525391,
+          "min_duration_seconds": 0.005613803863525391,
+          "max_duration_seconds": 0.005613803863525391,
+          "average_memory_delta_mb": 0.28515625,
+          "min_memory_delta_mb": 0.28515625,
+          "max_memory_delta_mb": 0.28515625,
+          "calls_per_second": 178.13233670262466
+        },
+        "table_address_quality_analysis": {
+          "call_count": 1,
+          "total_duration_seconds": 0.01342153549194336,
+          "average_duration_seconds": 0.01342153549194336,
+          "min_duration_seconds": 0.01342153549194336,
+          "max_duration_seconds": 0.01342153549194336,
+          "average_memory_delta_mb": 0.4921875,
+          "min_memory_delta_mb": 0.4921875,
+          "max_memory_delta_mb": 0.4921875,
+          "calls_per_second": 74.50712331687214
+        },
+        "table_address_security_processing": {
+          "call_count": 1,
+          "total_duration_seconds": 0.0001125335693359375,
+          "average_duration_seconds": 0.0001125335693359375,
+          "min_duration_seconds": 0.0001125335693359375,
+          "max_duration_seconds": 0.0001125335693359375,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 8886.237288135593
+        },
+        "table_address_business_rules": {
+          "call_count": 1,
+          "total_duration_seconds": 2.09808349609375e-05,
+          "average_duration_seconds": 2.09808349609375e-05,
+          "min_duration_seconds": 2.09808349609375e-05,
+          "max_duration_seconds": 2.09808349609375e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 47662.545454545456
+        },
+        "table_address_anomaly_detection": {
+          "call_count": 1,
+          "total_duration_seconds": 0.001649618148803711,
+          "average_duration_seconds": 0.001649618148803711,
+          "min_duration_seconds": 0.001649618148803711,
+          "max_duration_seconds": 0.001649618148803711,
+          "average_memory_delta_mb": 0.09765625,
+          "min_memory_delta_mb": 0.09765625,
+          "max_memory_delta_mb": 0.09765625,
+          "calls_per_second": 606.2008960832491
+        },
+        "table_customer_generation": {
+          "call_count": 1,
+          "total_duration_seconds": 0.0043528079986572266,
+          "average_duration_seconds": 0.0043528079986572266,
+          "min_duration_seconds": 0.0043528079986572266,
+          "max_duration_seconds": 0.0043528079986572266,
+          "average_memory_delta_mb": 0.1484375,
+          "min_memory_delta_mb": 0.1484375,
+          "max_memory_delta_mb": 0.1484375,
+          "calls_per_second": 229.73675850358765
+        },
+        "table_customer_quality_analysis": {
+          "call_count": 1,
+          "total_duration_seconds": 0.026260852813720703,
+          "average_duration_seconds": 0.026260852813720703,
+          "min_duration_seconds": 0.026260852813720703,
+          "max_duration_seconds": 0.026260852813720703,
+          "average_memory_delta_mb": 0.5859375,
+          "min_memory_delta_mb": 0.5859375,
+          "max_memory_delta_mb": 0.5859375,
+          "calls_per_second": 38.07949448913261
+        },
+        "table_customer_security_processing": {
+          "call_count": 1,
+          "total_duration_seconds": 0.00015807151794433594,
+          "average_duration_seconds": 0.00015807151794433594,
+          "min_duration_seconds": 0.00015807151794433594,
+          "max_duration_seconds": 0.00015807151794433594,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 6326.250377073907
+        },
+        "table_customer_business_rules": {
+          "call_count": 1,
+          "total_duration_seconds": 2.2411346435546875e-05,
+          "average_duration_seconds": 2.2411346435546875e-05,
+          "min_duration_seconds": 2.2411346435546875e-05,
+          "max_duration_seconds": 2.2411346435546875e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 44620.255319148935
+        },
+        "table_customer_anomaly_detection": {
+          "call_count": 1,
+          "total_duration_seconds": 0.004069089889526367,
+          "average_duration_seconds": 0.004069089889526367,
+          "min_duration_seconds": 0.004069089889526367,
+          "max_duration_seconds": 0.004069089889526367,
+          "average_memory_delta_mb": 0.0234375,
+          "min_memory_delta_mb": 0.0234375,
+          "max_memory_delta_mb": 0.0234375,
+          "calls_per_second": 245.75520009374816
+        },
+        "table_product_category_generation": {
+          "call_count": 1,
+          "total_duration_seconds": 0.0026395320892333984,
+          "average_duration_seconds": 0.0026395320892333984,
+          "min_duration_seconds": 0.0026395320892333984,
+          "max_duration_seconds": 0.0026395320892333984,
+          "average_memory_delta_mb": 0.01171875,
+          "min_memory_delta_mb": 0.01171875,
+          "max_memory_delta_mb": 0.01171875,
+          "calls_per_second": 378.85502664619275
+        },
+        "table_product_category_quality_analysis": {
+          "call_count": 1,
+          "total_duration_seconds": 0.005601644515991211,
+          "average_duration_seconds": 0.005601644515991211,
+          "min_duration_seconds": 0.005601644515991211,
+          "max_duration_seconds": 0.005601644515991211,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 178.5190040434135
+        },
+        "table_product_category_security_processing": {
+          "call_count": 1,
+          "total_duration_seconds": 9.608268737792969e-05,
+          "average_duration_seconds": 9.608268737792969e-05,
+          "min_duration_seconds": 9.608268737792969e-05,
+          "max_duration_seconds": 9.608268737792969e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 10407.70223325062
+        },
+        "table_product_category_business_rules": {
+          "call_count": 1,
+          "total_duration_seconds": 2.1219253540039062e-05,
+          "average_duration_seconds": 2.1219253540039062e-05,
+          "min_duration_seconds": 2.1219253540039062e-05,
+          "max_duration_seconds": 2.1219253540039062e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 47127.011235955055
+        },
+        "table_product_category_anomaly_detection": {
+          "call_count": 1,
+          "total_duration_seconds": 0.0012125968933105469,
+          "average_duration_seconds": 0.0012125968933105469,
+          "min_duration_seconds": 0.0012125968933105469,
+          "max_duration_seconds": 0.0012125968933105469,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 824.6763664962642
+        },
+        "table_product_generation": {
+          "call_count": 1,
+          "total_duration_seconds": 0.0019321441650390625,
+          "average_duration_seconds": 0.0019321441650390625,
+          "min_duration_seconds": 0.0019321441650390625,
+          "max_duration_seconds": 0.0019321441650390625,
+          "average_memory_delta_mb": 0.00390625,
+          "min_memory_delta_mb": 0.00390625,
+          "max_memory_delta_mb": 0.00390625,
+          "calls_per_second": 517.5597235932872
+        },
+        "table_product_quality_analysis": {
+          "call_count": 1,
+          "total_duration_seconds": 0.021008729934692383,
+          "average_duration_seconds": 0.021008729934692383,
+          "min_duration_seconds": 0.021008729934692383,
+          "max_duration_seconds": 0.021008729934692383,
+          "average_memory_delta_mb": 0.02734375,
+          "min_memory_delta_mb": 0.02734375,
+          "max_memory_delta_mb": 0.02734375,
+          "calls_per_second": 47.599260074673445
+        },
+        "table_product_security_processing": {
+          "call_count": 1,
+          "total_duration_seconds": 8.869171142578125e-05,
+          "average_duration_seconds": 8.869171142578125e-05,
+          "min_duration_seconds": 8.869171142578125e-05,
+          "max_duration_seconds": 8.869171142578125e-05,
+          "average_memory_delta_mb": 0.00390625,
+          "min_memory_delta_mb": 0.00390625,
+          "max_memory_delta_mb": 0.00390625,
+          "calls_per_second": 11275.010752688173
+        },
+        "table_product_business_rules": {
+          "call_count": 1,
+          "total_duration_seconds": 1.6927719116210938e-05,
+          "average_duration_seconds": 1.6927719116210938e-05,
+          "min_duration_seconds": 1.6927719116210938e-05,
+          "max_duration_seconds": 1.6927719116210938e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 59074.704225352114
+        },
+        "table_product_anomaly_detection": {
+          "call_count": 1,
+          "total_duration_seconds": 0.003022432327270508,
+          "average_duration_seconds": 0.003022432327270508,
+          "min_duration_seconds": 0.003022432327270508,
+          "max_duration_seconds": 0.003022432327270508,
+          "average_memory_delta_mb": 0.0078125,
+          "min_memory_delta_mb": 0.0078125,
+          "max_memory_delta_mb": 0.0078125,
+          "calls_per_second": 330.85935158160447
+        },
+        "table_order_header_generation": {
+          "call_count": 1,
+          "total_duration_seconds": 0.001085042953491211,
+          "average_duration_seconds": 0.001085042953491211,
+          "min_duration_seconds": 0.001085042953491211,
+          "max_duration_seconds": 0.001085042953491211,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 921.6225005493299
+        },
+        "table_order_header_quality_analysis": {
+          "call_count": 1,
+          "total_duration_seconds": 0.014435052871704102,
+          "average_duration_seconds": 0.014435052871704102,
+          "min_duration_seconds": 0.014435052871704102,
+          "max_duration_seconds": 0.014435052871704102,
+          "average_memory_delta_mb": 0.01171875,
+          "min_memory_delta_mb": 0.01171875,
+          "max_memory_delta_mb": 0.01171875,
+          "calls_per_second": 69.27581137996532
+        },
+        "table_order_header_security_processing": {
+          "call_count": 1,
+          "total_duration_seconds": 8.511543273925781e-05,
+          "average_duration_seconds": 8.511543273925781e-05,
+          "min_duration_seconds": 8.511543273925781e-05,
+          "max_duration_seconds": 8.511543273925781e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 11748.750700280112
+        },
+        "table_order_header_business_rules": {
+          "call_count": 1,
+          "total_duration_seconds": 1.6450881958007812e-05,
+          "average_duration_seconds": 1.6450881958007812e-05,
+          "min_duration_seconds": 1.6450881958007812e-05,
+          "max_duration_seconds": 1.6450881958007812e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 60787.014492753624
+        },
+        "table_order_header_anomaly_detection": {
+          "call_count": 1,
+          "total_duration_seconds": 0.002252340316772461,
+          "average_duration_seconds": 0.002252340316772461,
+          "min_duration_seconds": 0.002252340316772461,
+          "max_duration_seconds": 0.002252340316772461,
+          "average_memory_delta_mb": 0.00390625,
+          "min_memory_delta_mb": 0.00390625,
+          "max_memory_delta_mb": 0.00390625,
+          "calls_per_second": 443.9826399915317
+        },
+        "table_order_line_item_generation": {
+          "call_count": 1,
+          "total_duration_seconds": 0.0007121562957763672,
+          "average_duration_seconds": 0.0007121562957763672,
+          "min_duration_seconds": 0.0007121562957763672,
+          "max_duration_seconds": 0.0007121562957763672,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 1404.186139939739
+        },
+        "table_order_line_item_quality_analysis": {
+          "call_count": 1,
+          "total_duration_seconds": 0.009967327117919922,
+          "average_duration_seconds": 0.009967327117919922,
+          "min_duration_seconds": 0.009967327117919922,
+          "max_duration_seconds": 0.009967327117919922,
+          "average_memory_delta_mb": 0.00390625,
+          "min_memory_delta_mb": 0.00390625,
+          "max_memory_delta_mb": 0.00390625,
+          "calls_per_second": 100.32779983734392
+        },
+        "table_order_line_item_security_processing": {
+          "call_count": 1,
+          "total_duration_seconds": 8.440017700195312e-05,
+          "average_duration_seconds": 8.440017700195312e-05,
+          "min_duration_seconds": 8.440017700195312e-05,
+          "max_duration_seconds": 8.440017700195312e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 11848.316384180791
+        },
+        "table_order_line_item_business_rules": {
+          "call_count": 1,
+          "total_duration_seconds": 1.6927719116210938e-05,
+          "average_duration_seconds": 1.6927719116210938e-05,
+          "min_duration_seconds": 1.6927719116210938e-05,
+          "max_duration_seconds": 1.6927719116210938e-05,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 59074.704225352114
+        },
+        "table_order_line_item_anomaly_detection": {
+          "call_count": 1,
+          "total_duration_seconds": 0.0013930797576904297,
+          "average_duration_seconds": 0.0013930797576904297,
+          "min_duration_seconds": 0.0013930797576904297,
+          "max_duration_seconds": 0.0013930797576904297,
+          "average_memory_delta_mb": 0.0,
+          "min_memory_delta_mb": 0.0,
+          "max_memory_delta_mb": 0.0,
+          "calls_per_second": 717.8339893890125
+        }
+      }
+    },
+    "memory_usage_mb": 109.72265625,
+    "peak_memory_mb": 109.72265625,
+    "average_quality_score": 1.0,
+    "security_operations_count": 0,
+    "total_errors": 0
+  },
+  "error_details": []
+}

@@ -1,0 +1,412 @@
+{
+    "environment": "development",
+    "performance": {
+        "max_workers": 4,
+        "batch_size": 10000,
+        "streaming_batch_size": 1000,
+        "max_memory_mb": 1000,
+        "enable_parallel": true,
+        "enable_streaming": true,
+        "cache_size_limit": 5
+    },
+
+    "security": {
+        "enable_data_masking": false,
+        "enable_encryption": false,
+        "audit_enabled": true,
+        "sensitive_data_patterns": ["ssn", "credit_card", "email", "phone"],
+        "encryption_key_file": null
+    },
+
+    "openai": {
+        "enabled": false,
+        "api_key": null,
+        "api_key_env_var": "OPENAI_API_KEY",
+        "api_key_file": null,
+        "model": "gpt-3.5-turbo",
+        "max_tokens": 2000,
+        "temperature": 0.7,
+        "cache_size": 100,
+        "timeout_seconds": 30,
+        "retry_attempts": 3,
+        "fallback_enabled": true,
+        "cost_limit_usd": 10.0
+    },
+
+    "output": {
+        "format": "csv",
+        "directory": "./output/{timestamp}",
+        "filename_template": "{table_name}_{timestamp}",
+        "compression": null,
+        "encoding": "utf-8",
+        "include_header": true
+    },
+
+    "validation": {
+        "strict_mode": false,
+        "max_validation_errors": 100,
+        "enable_data_quality_analysis": true,
+        "enable_anomaly_detection": true,
+        "quality_threshold": 0.8
+    },
+
+    "logging": {
+        "level": "INFO",
+        "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        "file_path": null,
+        "max_file_size_mb": 100,
+        "backup_count": 5
+    },
+    "tables": [
+        {
+            "table_name": "address",
+            "columns": [
+                {
+                    "name": "address_id",
+                    "type": "int",
+                    "constraint": ["PK"],
+                    "nullable": false,
+                    "length": 8
+                },
+                {
+                    "name": "street_address",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "address",
+                    "length": {
+                        "min": 10,
+                        "max": 100
+                    }
+                },
+                {
+                    "name": "city",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "city",
+                    "length": {
+                        "min": 3,
+                        "max": 50
+                    }
+                },
+                {
+                    "name": "postal_code",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": {
+                        "type": "range",
+                        "min": 10000,
+                        "max": 99999
+                    },
+                    "length": 5
+                }
+            ]
+        },
+        {
+            "table_name": "user_profile",
+            "columns": [
+                {
+                    "name": "profile_id",
+                    "type": "uuid",
+                    "constraint": ["PK"],
+                    "nullable": false,
+                    "rule": "uuid",
+                    "length": 36
+                },
+                {
+                    "name": "bio",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "text",
+                    "length": {
+                        "min": 50,
+                        "max": 500
+                    }
+                },
+                {
+                    "name": "profile_picture_url",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "url",
+                    "length": {
+                        "min": 20,
+                        "max": 200
+                    }
+                }
+            ]
+        },
+        {
+            "table_name": "customer",
+            "columns": [
+                {
+                    "name": "customer_id",
+                    "type": "str",
+                    "constraint": ["PK"],
+                    "nullable": false,
+                    "rule": {
+                        "prefix": "CUST-",
+                        "type": "uuid"
+                    },
+                    "length": 41
+                },
+                {
+                    "name": "first_name",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "first_name",
+                    "length": {
+                        "min": 2,
+                        "max": 30
+                    }
+                },
+                {
+                    "name": "last_name",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "last_name",
+                    "length": {
+                        "min": 2,
+                        "max": 40
+                    }
+                },
+                {
+                    "name": "email",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": {
+                        "type": "email",
+                        "regex": "^[\\w.-]+@[\\w.-]+\\.\\w{2,4}$"
+                    },
+                    "sensitivity": "PII",
+                    "length": {
+                        "min": 10,
+                        "max": 100
+                    }
+                },
+                {
+                    "name": "phone_number",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": {
+                        "type": "phone_number",
+                        "regex": "^\\+?[0-9]{10,15}$"
+                    },
+                    "sensitivity": "PII",
+                    "length": {
+                        "min": 10,
+                        "max": 15
+                    }
+                },
+                {
+                    "name": "date_of_birth",
+                    "type": "date",
+                    "nullable": true,
+                    "rule": {
+                        "type": "date_range",
+                        "start": "1950-01-01",
+                        "end": "2005-12-31"
+                    }
+                },
+                {
+                    "name": "registration_date",
+                    "type": "date",
+                    "nullable": true,
+                    "rule": {
+                        "type": "date_range",
+                        "start": "2020-01-01"
+                    },
+                    "default": "2020-01-01"
+                },
+                {
+                    "name": "address_id",
+                    "type": "int",
+                    "nullable": true,
+                    "length": 8
+                },
+                {
+                    "name": "profile_id",
+                    "type": "uuid",
+                    "nullable": true,
+                    "length": 36
+                },
+                {
+                    "name": "age",
+                    "type": "int",
+                    "nullable": true,
+                    "rule": {
+                        "type": "range",
+                        "min": 18,
+                        "max": 90
+                    },
+                    "length": 2
+                },
+                {
+                    "name": "income",
+                    "type": "float",
+                    "nullable": true,
+                    "rule": {
+                        "type": "range",
+                        "min": 1000,
+                        "max": 1000000
+                    },
+                    "conditional_rules": [
+                        {
+                            "when": [
+                                {
+                                    "column": "age",
+                                    "value": 25,
+                                    "operator": "less_than"
+                                }
+                            ],
+                            "then": {
+                                "rule": {
+                                    "type": "range",
+                                    "max": 30000
+                                }
+                            }
+                        },
+                        {
+                            "when": [
+                                {
+                                    "column": "age",
+                                    "min": 25,
+                                    "max": 50,
+                                    "operator": "range"
+                                }
+                            ],
+                            "then": {
+                                "rule": {
+                                    "type": "range",
+                                    "min": 30000,
+                                    "max": 100000
+                                }
+                            }
+                        },
+                        {
+                            "when": [
+                                {
+                                    "column": "age",
+                                    "value": 50,
+                                    "operator": "greater_than"
+                                }
+                            ],
+                            "then": {
+                                "rule": {
+                                    "type": "range",
+                                    "min": 100000
+                                }
+                            }
+                        }
+                    ],
+                    "sensitivity": "FINANCIAL"
+                },
+                {
+                    "name": "gender",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": {
+                        "type": "choice",
+                        "value": [
+                            "Male",
+                            "Female",
+                            "Other",
+                            "Not Specified"
+                        ],
+                        "probabilities": {
+                            "Male": 0.45,
+                            "Female": 0.45,
+                            "Other": 0.05,
+                            "Not Specified": 0.05
+                        }
+                    },
+                    "default": "Not Specified",
+                    "length": 8
+                },
+                {
+                    "name": "customer_code",
+                    "type": "str",
+                    "nullable": false,
+                    "rule": {
+                        "type": "choice",
+                        "value": ["PREM", "GOLD", "SILV", "BRON"]
+                    },
+                    "length": 4
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "parent_table": "address",
+                    "parent_column": "address_id",
+                    "child_column": "address_id",
+                    "relationship_type": "one_to_one"
+                },
+                {
+                    "parent_table": "user_profile",
+                    "parent_column": "profile_id",
+                    "child_column": "profile_id",
+                    "relationship_type": "one_to_one"
+                }
+            ]
+        },
+        {
+            "table_name": "order",
+            "columns": [
+                {
+                    "name": "order_id",
+                    "type": "uuid",
+                    "constraint": ["PK"],
+                    "nullable": false,
+                    "rule": "uuid",
+                    "length": 36
+                },
+                {
+                    "name": "customer_id",
+                    "type": "str",
+                    "nullable": false,
+                    "length": 41
+                },
+                {
+                    "name": "order_number",
+                    "type": "str",
+                    "nullable": false,
+                    "rule": {
+                        "type": "range",
+                        "min": 100000,
+                        "max": 999999
+                    },
+                    "length": 6
+                },
+                {
+                    "name": "total_amount",
+                    "type": "float",
+                    "nullable": false,
+                    "rule": {
+                        "type": "range",
+                        "min": 10.0,
+                        "max": 5000.0
+                    }
+                },
+                {
+                    "name": "order_date",
+                    "type": "date",
+                    "nullable": false,
+                    "rule": {
+                        "type": "date_range",
+                        "start": "2020-01-01",
+                        "end": "2024-12-31"
+                    }
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "parent_table": "customer",
+                    "parent_column": "customer_id",
+                    "child_column": "customer_id",
+                    "relationship_type": "one_to_one"
+                }
+            ]
+        }
+    ],
+    "locale": "en_GB",
+    "rows": 1000,
+    "output_format": "csv"
+}

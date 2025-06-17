@@ -1,0 +1,2 @@
+customer_id,address_id,first_name,last_name,email,phone_number,date_of_birth,registration_date,age,income,gender,customer_status,loyalty_tier,credit_score,marketing_opt_in,created_at,updated_at,notes
+780333,605f8651-4942-418b-bd33-1eb7ab56f576,Veronica,Dillon,c*********************m,3********1,1968-10-02,2020-12-02,74,383344.23,Female,INACTIVE,BRONZE,510,False,2024-03-15 07:55:49,2023-06-03 08:03:18,Excellent payment history

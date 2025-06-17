@@ -1,0 +1,903 @@
+{
+  "environment": "production",
+  "locale": "en_US",
+  "rows": 10,
+  "output_format": "csv",
+
+  "tables": [
+    {
+      "table_name": "address",
+      "columns": [
+        {
+          "name": "address_id",
+          "type": "uuid",
+          "constraint": ["PK"],
+          "nullable": false,
+          "rule": "uuid"
+        },
+        {
+          "name": "street_address",
+          "type": "str",
+          "nullable": true,
+          "rule": "address",
+          "length": {"min": 10, "max": 100}
+        },
+        {
+          "name": "city",
+          "type": "str",
+          "nullable": true,
+          "rule": "city",
+          "length": {"min": 3, "max": 50}
+        },
+        {
+          "name": "state",
+          "type": "str",
+          "nullable": true,
+          "rule": "state",
+          "length": 2
+        },
+        {
+          "name": "zip_code",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "regex",
+            "pattern": "\\d{5}(-\\d{4})?"
+          },
+          "length": {"min": 5, "max": 10}
+        },
+        {
+          "name": "country",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": ["United States", "Canada", "Mexico"],
+            "probabilities": {
+              "United States": 0.8,
+              "Canada": 0.15,
+              "Mexico": 0.05
+            }
+          },
+          "default": "United States"
+        }
+      ]
+    },
+    {
+      "table_name": "customer",
+      "columns": [
+        {
+          "name": "customer_id",
+          "type": "int",
+          "constraint": ["PK"],
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 1,
+            "max": 1000000
+          }
+        },
+        {
+          "name": "first_name",
+          "type": "str",
+          "nullable": false,
+          "rule": "first_name",
+          "length": {"min": 2, "max": 30}
+        },
+        {
+          "name": "last_name",
+          "type": "str",
+          "nullable": false,
+          "rule": "last_name",
+          "length": {"min": 2, "max": 30}
+        },
+        {
+          "name": "email",
+          "type": "str",
+          "constraint": ["unique"],
+          "nullable": false,
+          "rule": {
+            "type": "email",
+            "regex": "^[\\w.-]+@[\\w.-]+\\.\\w{2,4}$"
+          },
+          "sensitivity": "PII",
+          "length": {"min": 8, "max": 100}
+        },
+        {
+          "name": "phone_number",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "phone_number",
+            "regex": "^\\+?[0-9]{10,15}$",
+            "country": "US"
+          },
+          "sensitivity": "PII",
+          "length": {"min": 10, "max": 15}
+        },
+        {
+          "name": "date_of_birth",
+          "type": "date",
+          "nullable": true,
+          "rule": {
+            "type": "date_range",
+            "start": "1950-01-01",
+            "end": "2005-12-31"
+          },
+          "sensitivity": "PII"
+        },
+        {
+          "name": "registration_date",
+          "type": "date",
+          "nullable": false,
+          "rule": {
+            "type": "date_range",
+            "start": "2020-01-01",
+            "end": "2024-12-31"
+          },
+          "default": "2020-01-01"
+        },
+        {
+          "name": "address_id",
+          "type": "uuid",
+          "nullable": true
+        },
+        {
+          "name": "age",
+          "type": "int",
+          "nullable": true,
+          "rule": {
+            "type": "range",
+            "min": 18,
+            "max": 90
+          }
+        },
+        {
+          "name": "income",
+          "type": "float",
+          "nullable": true,
+          "rule": {
+            "type": "range",
+            "min": 20000,
+            "max": 500000
+          },
+          "conditional_rules": [
+            {
+              "when": [
+                {
+                  "column": "age",
+                  "value": 25,
+                  "operator": "less_than"
+                }
+              ],
+              "then": {
+                "rule": {
+                  "type": "range",
+                  "min": 20000,
+                  "max": 50000
+                }
+              }
+            },
+            {
+              "when": [
+                {
+                  "column": "age",
+                  "min": 25,
+                  "max": 50,
+                  "operator": "range"
+                }
+              ],
+              "then": {
+                "rule": {
+                  "type": "range",
+                  "min": 40000,
+                  "max": 150000
+                }
+              }
+            },
+            {
+              "when": [
+                {
+                  "column": "age",
+                  "value": 50,
+                  "operator": "greater_than"
+                }
+              ],
+              "then": {
+                "rule": {
+                  "type": "range",
+                  "min": 60000,
+                  "max": 500000
+                }
+              }
+            }
+          ],
+          "sensitivity": "FINANCIAL"
+        },
+        {
+          "name": "gender",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "choice",
+            "value": ["Male", "Female", "Other", "Not Specified"],
+            "probabilities": {
+              "Male": 0.45,
+              "Female": 0.45,
+              "Other": 0.05,
+              "Not Specified": 0.05
+            }
+          },
+          "default": "Not Specified"
+        },
+        {
+          "name": "customer_status",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": ["ACTIVE", "INACTIVE", "SUSPENDED", "PENDING"],
+            "probabilities": {
+              "ACTIVE": 0.7,
+              "INACTIVE": 0.15,
+              "SUSPENDED": 0.1,
+              "PENDING": 0.05
+            }
+          },
+          "default": "ACTIVE"
+        },
+        {
+          "name": "loyalty_tier",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "choice",
+            "value": ["BRONZE", "SILVER", "GOLD", "PLATINUM"],
+            "probabilities": {
+              "BRONZE": 0.4,
+              "SILVER": 0.3,
+              "GOLD": 0.2,
+              "PLATINUM": 0.1
+            }
+          }
+        },
+        {
+          "name": "credit_score",
+          "type": "int",
+          "nullable": true,
+          "rule": {
+            "type": "range",
+            "min": 300,
+            "max": 850
+          },
+          "sensitivity": "FINANCIAL"
+        },
+        {
+          "name": "marketing_opt_in",
+          "type": "bool",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": [true, false],
+            "probabilities": {
+              "true": 0.65,
+              "false": 0.35
+            }
+          },
+          "default": false
+        },
+        {
+          "name": "created_at",
+          "type": "datetime",
+          "nullable": false,
+          "rule": {
+            "type": "timestamp_range",
+            "start": "2020-01-01 00:00:00",
+            "end": "2024-12-31 23:59:59"
+          }
+        },
+        {
+          "name": "updated_at",
+          "type": "datetime",
+          "nullable": true,
+          "rule": {
+            "type": "timestamp_range",
+            "start": "2020-01-01 00:00:00",
+            "end": "2024-12-31 23:59:59"
+          }
+        },
+        {
+          "name": "notes",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "VIP customer", "High value account", "Frequent buyer",
+              "Seasonal customer", "Corporate account", "Referral customer",
+              "Complaint history", "Payment issues resolved", "Excellent payment history"
+            ]
+          },
+          "length": {"min": 10, "max": 200}
+        }
+      ],
+      "foreign_keys": [
+        {
+          "parent_table": "address",
+          "parent_column": "address_id",
+          "child_column": "address_id",
+          "relationship_type": "one_to_one",
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "table_name": "product_category",
+      "columns": [
+        {
+          "name": "category_id",
+          "type": "int",
+          "constraint": ["PK"],
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 1,
+            "max": 100
+          }
+        },
+        {
+          "name": "category_name",
+          "type": "str",
+          "constraint": ["unique"],
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "Electronics", "Clothing & Apparel", "Home & Garden", "Sports & Outdoors",
+              "Books & Media", "Toys & Games", "Health & Beauty", "Automotive",
+              "Food & Beverages", "Office Supplies", "Pet Supplies", "Jewelry",
+              "Arts & Crafts", "Musical Instruments", "Baby Products"
+            ]
+          }
+        },
+        {
+          "name": "description",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "Electronic devices and accessories",
+              "Fashion and clothing items",
+              "Home improvement and garden supplies",
+              "Sports equipment and outdoor gear",
+              "Books, movies, and media content",
+              "Toys and recreational games",
+              "Health, beauty, and personal care",
+              "Car parts and automotive accessories",
+              "Food products and beverages",
+              "Office and business supplies",
+              "Pet care and animal supplies",
+              "Jewelry and fashion accessories",
+              "Art supplies and craft materials",
+              "Musical instruments and audio equipment",
+              "Baby and infant care products"
+            ]
+          }
+        },
+        {
+          "name": "is_active",
+          "type": "bool",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": [true, false],
+            "probabilities": {
+              "true": 0.9,
+              "false": 0.1
+            }
+          },
+          "default": true
+        }
+      ]
+    },
+    {
+      "table_name": "product",
+      "columns": [
+        {
+          "name": "product_id",
+          "type": "str",
+          "constraint": ["PK"],
+          "nullable": false,
+          "rule": {
+            "prefix": "PROD-",
+            "type": "range",
+            "min": 100000,
+            "max": 999999
+          },
+          "length": 11
+        },
+        {
+          "name": "product_name",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "Wireless Bluetooth Headphones", "4K Ultra HD Smart TV", "Gaming Laptop Pro",
+              "Stainless Steel Water Bottle", "Organic Cotton T-Shirt", "LED Desk Lamp",
+              "Portable Phone Charger", "Memory Foam Pillow", "Bluetooth Speaker",
+              "Fitness Tracker Watch", "Coffee Machine Deluxe", "Yoga Mat Premium",
+              "Wireless Mouse Ergonomic", "Standing Desk Converter", "Air Purifier HEPA"
+            ]
+          },
+          "length": {"min": 5, "max": 100}
+        },
+        {
+          "name": "category_id",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "price",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 9.99,
+            "max": 4999.99
+          }
+        },
+        {
+          "name": "cost",
+          "type": "float",
+          "nullable": true,
+          "rule": {
+            "type": "range",
+            "min": 5.00,
+            "max": 3000.00
+          },
+          "sensitivity": "FINANCIAL"
+        },
+        {
+          "name": "sku",
+          "type": "str",
+          "constraint": ["unique"],
+          "nullable": false,
+          "rule": {
+            "prefix": "SKU-",
+            "type": "range",
+            "min": 1000000,
+            "max": 9999999
+          },
+          "length": 11
+        },
+        {
+          "name": "stock_quantity",
+          "type": "int",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 0,
+            "max": 10000
+          }
+        },
+        {
+          "name": "reorder_level",
+          "type": "int",
+          "nullable": true,
+          "rule": {
+            "type": "range",
+            "min": 5,
+            "max": 100
+          }
+        },
+        {
+          "name": "supplier_id",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "prefix": "SUP-",
+            "type": "range",
+            "min": 1000,
+            "max": 9999
+          }
+        },
+        {
+          "name": "weight_kg",
+          "type": "float",
+          "nullable": true,
+          "rule": {
+            "type": "range",
+            "min": 0.01,
+            "max": 50.0
+          }
+        },
+        {
+          "name": "dimensions",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "regex",
+            "pattern": "\\d{1,3}x\\d{1,3}x\\d{1,3}cm"
+          }
+        },
+        {
+          "name": "is_active",
+          "type": "bool",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": [true, false],
+            "probabilities": {
+              "true": 0.85,
+              "false": 0.15
+            }
+          },
+          "default": true
+        },
+        {
+          "name": "created_date",
+          "type": "date",
+          "nullable": false,
+          "rule": {
+            "type": "date_range",
+            "start": "2020-01-01",
+            "end": "2024-12-31"
+          }
+        }
+      ],
+      "foreign_keys": [
+        {
+          "parent_table": "product_category",
+          "parent_column": "category_id",
+          "child_column": "category_id",
+          "relationship_type": "many_to_one",
+          "nullable": false
+        }
+      ]
+    },
+    {
+      "table_name": "order_header",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "str",
+          "constraint": ["PK"],
+          "nullable": false,
+          "rule": {
+            "prefix": "ORD-",
+            "type": "range",
+            "min": 1000000,
+            "max": 9999999
+          },
+          "length": 11
+        },
+        {
+          "name": "customer_id",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "order_date",
+          "type": "date",
+          "nullable": false,
+          "rule": {
+            "type": "date_range",
+            "start": "2023-01-01",
+            "end": "2024-12-31"
+          }
+        },
+        {
+          "name": "order_time",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "09:00:00", "10:30:00", "12:15:00", "14:45:00", "16:20:00",
+              "18:30:00", "20:10:00", "22:00:00"
+            ]
+          }
+        },
+        {
+          "name": "status",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"],
+            "probabilities": {
+              "PENDING": 0.05,
+              "CONFIRMED": 0.1,
+              "PROCESSING": 0.15,
+              "SHIPPED": 0.2,
+              "DELIVERED": 0.45,
+              "CANCELLED": 0.03,
+              "RETURNED": 0.02
+            }
+          },
+          "default": "PENDING"
+        },
+        {
+          "name": "subtotal",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 10.00,
+            "max": 10000.00
+          }
+        },
+        {
+          "name": "tax_amount",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 0.50,
+            "max": 800.00
+          }
+        },
+        {
+          "name": "shipping_cost",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 0.00,
+            "max": 50.00
+          }
+        },
+        {
+          "name": "total_amount",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 10.50,
+            "max": 10850.00
+          }
+        },
+        {
+          "name": "payment_method",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": ["CREDIT_CARD", "DEBIT_CARD", "PAYPAL", "APPLE_PAY", "GOOGLE_PAY", "BANK_TRANSFER", "CASH_ON_DELIVERY"],
+            "probabilities": {
+              "CREDIT_CARD": 0.4,
+              "DEBIT_CARD": 0.25,
+              "PAYPAL": 0.15,
+              "APPLE_PAY": 0.08,
+              "GOOGLE_PAY": 0.07,
+              "BANK_TRANSFER": 0.03,
+              "CASH_ON_DELIVERY": 0.02
+            }
+          }
+        },
+        {
+          "name": "shipping_address_id",
+          "type": "uuid",
+          "nullable": true
+        },
+        {
+          "name": "billing_address_id",
+          "type": "uuid",
+          "nullable": true
+        },
+        {
+          "name": "notes",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "Rush delivery requested", "Gift wrapping required", "Fragile items",
+              "Leave at front door", "Contact before delivery", "Business delivery",
+              "Weekend delivery preferred", "Special handling required"
+            ]
+          },
+          "length": {"min": 10, "max": 150}
+        }
+      ],
+      "foreign_keys": [
+        {
+          "parent_table": "customer",
+          "parent_column": "customer_id",
+          "child_column": "customer_id",
+          "relationship_type": "many_to_one",
+          "nullable": false
+        },
+        {
+          "parent_table": "address",
+          "parent_column": "address_id",
+          "child_column": "shipping_address_id",
+          "relationship_type": "many_to_one",
+          "nullable": true
+        },
+        {
+          "parent_table": "address",
+          "parent_column": "address_id",
+          "child_column": "billing_address_id",
+          "relationship_type": "many_to_one",
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "table_name": "order_line_item",
+      "columns": [
+        {
+          "name": "line_item_id",
+          "type": "str",
+          "constraint": ["PK"],
+          "nullable": false,
+          "rule": {
+            "prefix": "LI-",
+            "type": "range",
+            "min": 10000000,
+            "max": 99999999
+          },
+          "length": 11
+        },
+        {
+          "name": "order_id",
+          "type": "str",
+          "nullable": false
+        },
+        {
+          "name": "product_id",
+          "type": "str",
+          "nullable": false
+        },
+        {
+          "name": "quantity",
+          "type": "int",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 1,
+            "max": 10
+          }
+        },
+        {
+          "name": "unit_price",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 9.99,
+            "max": 4999.99
+          }
+        },
+        {
+          "name": "discount_amount",
+          "type": "float",
+          "nullable": true,
+          "rule": {
+            "type": "range",
+            "min": 0.00,
+            "max": 500.00
+          }
+        },
+        {
+          "name": "line_total",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 9.99,
+            "max": 49999.90
+          }
+        }
+      ],
+      "foreign_keys": [
+        {
+          "parent_table": "order_header",
+          "parent_column": "order_id",
+          "child_column": "order_id",
+          "relationship_type": "many_to_one",
+          "nullable": false
+        },
+        {
+          "parent_table": "product",
+          "parent_column": "product_id",
+          "child_column": "product_id",
+          "relationship_type": "many_to_one",
+          "nullable": false
+        }
+      ]
+    }
+  ],
+
+  "performance": {
+    "max_workers": 8,
+    "batch_size": 50000,
+    "streaming_batch_size": 5000,
+    "max_memory_mb": 4000,
+    "enable_parallel": true,
+    "enable_streaming": true,
+    "cache_size_limit": 100000
+  },
+
+  "security": {
+    "enable_data_masking": true,
+    "enable_encryption": true,
+    "audit_enabled": true,
+    "masking_rules": {
+      "email": "partial",
+      "phone_number": "partial",
+      "income": "hash",
+      "credit_score": "full",
+      "cost": "hash"
+    },
+    "encrypt_fields": ["income", "credit_score", "cost"],
+    "sensitive_data_patterns": ["ssn", "credit_card", "email", "phone", "income", "salary"],
+    "encryption_key_file": "./security/encryption.key"
+  },
+
+  "openai": {
+    "enabled": true,
+    "api_key_env_var": "OPENAI_API_KEY",
+    "model": "gpt-3.5-turbo",
+    "max_tokens": 2000,
+    "temperature": 0.7,
+    "cache_size": 200,
+    "timeout_seconds": 60,
+    "retry_attempts": 5,
+    "fallback_enabled": true,
+    "cost_limit_usd": 100.0
+  },
+
+  "output": {
+    "format": "csv",
+    "directory": "./comprehensive_output",
+    "filename_template": "{table_name}_{timestamp}",
+    "compression": "gzip",
+    "encoding": "utf-8",
+    "include_header": true
+  },
+
+  "validation": {
+    "strict_mode": true,
+    "max_validation_errors": 50,
+    "enable_data_quality_analysis": true,
+    "enable_anomaly_detection": true,
+    "enable_business_rules": true,
+    "quality_threshold": 0.95,
+    "business_rules": [
+      {
+        "type": "conditional",
+        "condition_column": "age",
+        "condition_operator": "greater_than",
+        "condition_value": 65,
+        "requirement_column": "loyalty_tier",
+        "requirement_value": "GOLD"
+      },
+      {
+        "type": "range_dependency",
+        "income_column": "income",
+        "score_column": "credit_score",
+        "income_threshold": 100000,
+        "score_threshold": 700
+      },
+      {
+        "type": "mutual_exclusivity",
+        "column1": "customer_status",
+        "column2": "marketing_opt_in",
+        "value1": "SUSPENDED",
+        "value2": true
+      }
+    ]
+  },
+
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "max_file_size_mb": 100,
+    "backup_count": 5,
+    "enhanced_format": true
+  }
+}

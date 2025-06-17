@@ -1,0 +1,194 @@
+{
+    "tables": [
+		{
+			"table_name": "address",
+            "columns": [
+                {
+                    "name": "address_id",
+                    "type": "uuid",
+					"constraint": ["PK"]
+                },
+                {
+                    "name": "address",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "address"
+                }
+			]
+		},
+        {
+            "table_name": "customer",
+            "columns": [
+                {
+                    "name": "customer_id",
+                    "type": "int",
+					"constraint": ["PK"],
+                    "rule": {
+                        "type": "range",
+                        "min": 0,
+                        "max": 100000
+                    }
+                },
+                {
+                    "name": "first_name",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "first_name"
+                },
+                {
+                    "name": "last_name",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "last_name"
+                },
+                {
+                    "name": "email",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": {
+                        "type": "email",
+                        "regex": "^[\\w.-]+@[\\w.-]+\\.\\w{2,4}$"
+                    },
+                    "sensitivity": "PII"
+                },
+                {
+                    "name": "phone_number",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": {
+                        "type": "phone_number",
+                        "regex": "^\\+?[0-9]{10,15}$"
+                    },
+                    "sensitivity": "PII"
+                },
+                {
+                    "name": "date_of_birth",
+                    "type": "date",
+                    "nullable": true,
+                    "rule": {
+                        "type": "date_range",
+                        "start": "1950-01-01"
+                    }
+                },
+                {
+                    "name": "registration_date",
+                    "type": "date",
+                    "nullable": true,
+                    "rule": {
+                        "type": "date_range",
+                        "start": "1950-01-01"
+                    },
+                    "default": "2020-01-01"
+                },
+                {
+                    "name": "address_id",
+                    "type": "uuid",
+                    "nullable": true
+                },
+                {
+                    "name": "age",
+                    "type": "int",
+                    "nullable": true,
+                    "rule": {
+                        "type": "range",
+                        "min": 18,
+                        "max": 90
+                    }
+                },
+                {
+                    "name": "income",
+                    "type": "float",
+                    "nullable": true,
+                    "rule": {
+                        "type": "range",
+                        "min": 1000,
+                        "max": 1000000
+                    },
+                    "conditional_rules": [
+                        {
+                            "when": [
+                                {
+                                    "column": "age",
+                                    "value": 25,
+                                    "operator": "less_than"
+                                }
+                            ],
+                            "then": {
+                                "rule": {
+                                    "type": "range",
+                                    "max": 30000
+                                }
+                            }
+                        },
+                        {
+                            "when": [
+                                {
+                                    "column": "age",
+                                    "min": 25,
+                                    "max": 50,
+                                    "operator": "range"
+                                }
+                            ],
+                            "then": {
+                                "rule": {
+                                    "type": "range",
+                                    "min": 30000,
+                                    "max": 100000
+                                }
+                            }
+                        },
+                        {
+                            "when": [
+                                {
+                                    "column": "age",
+                                    "value": 50,
+                                    "operator": "greater_than"
+                                }
+                            ],
+                            "then": {
+                                "rule": {
+                                    "type": "range",
+                                    "min": 100000
+                                }
+                            }
+                        }
+                    ],
+                    "sensitivity": "FINANCIAL"
+                },
+                {
+                    "name": "gender",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": {
+                        "type": "choice",
+                        "value": [
+                            "Male",
+                            "Female",
+                            "Other",
+                            "Not Specified"
+                        ],
+                        "probabilities": {
+                            "Male": 0.45,
+                            "Female": 0.45,
+                            "Other": 0.05,
+                            "Not Specified": 0.05
+                        }
+                    },
+                    "default": "Not Specified"
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "parent_table": "address",
+                    "parent_column": "address_id",
+                    "child_column": "address_id",
+                    "relationship_type": "one_to_one",
+                    "nullable": false
+                }
+            ]
+        }
+    ],
+    "locale": "en_GB",
+    "rows": 20000
+}
+

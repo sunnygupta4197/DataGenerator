@@ -1,0 +1,2 @@
+product_id,category_id,product_name,price,cost,sku,stock_quantity,reorder_level,supplier_id,weight_kg,dimensions,is_active,created_date
+PROD-898749,8231152687802663646,4K Ultra HD Smart TV,3703.77,790.05,SKU-7168509,1061,95,SUP-1652,45.52,34x4x345cm,True,2022-10-23

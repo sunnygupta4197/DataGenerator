@@ -1,0 +1,2 @@
+order_id,customer_id,shipping_address_id,billing_address_id,order_date,order_time,status,subtotal,tax_amount,shipping_cost,total_amount,payment_method,notes
+ORD-4308224,246919,c3279665-bf49-40de-afb5-3ff4b7e8eb8e,c3279665-bf49-40de-afb5-3ff4b7e8eb8e,2023-02-09,18:30:00,PENDING,1994.83,701.9,1.67,6857.37,GOOGLE_PAY,Weekend delivery preferred

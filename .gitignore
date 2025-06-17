@@ -1,0 +1,6 @@
+venv/
+output/
+*output/
+*.pyc
+*.zip
+versions/

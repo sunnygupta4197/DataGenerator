@@ -1,0 +1,60 @@
+{
+  "timestamp": 1750163524.8580565,
+  "operations": {
+    "table_address_generation": {
+      "call_count": 1,
+      "total_duration_seconds": 9.800647020339966,
+      "average_duration_seconds": 9.800647020339966,
+      "min_duration_seconds": 9.800647020339966,
+      "max_duration_seconds": 9.800647020339966,
+      "average_memory_delta_mb": 0.5546875,
+      "min_memory_delta_mb": 0.5546875,
+      "max_memory_delta_mb": 0.5546875,
+      "calls_per_second": 0.10203407978316435
+    },
+    "table_address_quality_analysis": {
+      "call_count": 1,
+      "total_duration_seconds": 0.007336854934692383,
+      "average_duration_seconds": 0.007336854934692383,
+      "min_duration_seconds": 0.007336854934692383,
+      "max_duration_seconds": 0.007336854934692383,
+      "average_memory_delta_mb": 0.46484375,
+      "min_memory_delta_mb": 0.46484375,
+      "max_memory_delta_mb": 0.46484375,
+      "calls_per_second": 136.2981834725246
+    },
+    "table_address_security_processing": {
+      "call_count": 1,
+      "total_duration_seconds": 6.461143493652344e-05,
+      "average_duration_seconds": 6.461143493652344e-05,
+      "min_duration_seconds": 6.461143493652344e-05,
+      "max_duration_seconds": 6.461143493652344e-05,
+      "average_memory_delta_mb": 0.0,
+      "min_memory_delta_mb": 0.0,
+      "max_memory_delta_mb": 0.0,
+      "calls_per_second": 15477.136531365313
+    },
+    "table_address_business_rules": {
+      "call_count": 1,
+      "total_duration_seconds": 1.9073486328125e-05,
+      "average_duration_seconds": 1.9073486328125e-05,
+      "min_duration_seconds": 1.9073486328125e-05,
+      "max_duration_seconds": 1.9073486328125e-05,
+      "average_memory_delta_mb": 0.0,
+      "min_memory_delta_mb": 0.0,
+      "max_memory_delta_mb": 0.0,
+      "calls_per_second": 52428.8
+    },
+    "table_address_anomaly_detection": {
+      "call_count": 1,
+      "total_duration_seconds": 0.0012440681457519531,
+      "average_duration_seconds": 0.0012440681457519531,
+      "min_duration_seconds": 0.0012440681457519531,
+      "max_duration_seconds": 0.0012440681457519531,
+      "average_memory_delta_mb": 0.1015625,
+      "min_memory_delta_mb": 0.1015625,
+      "max_memory_delta_mb": 0.1015625,
+      "calls_per_second": 803.8144883096973
+    }
+  }
+}

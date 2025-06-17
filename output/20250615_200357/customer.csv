@@ -1,0 +1,2 @@
+customer_id,address_id,first_name,last_name,email,phone_number,date_of_birth,registration_date,age,income,gender,customer_status,loyalty_tier,credit_score,marketing_opt_in,created_at,updated_at,notes
+375608,4f5da82e-cfd2-4719-a930-1ca7bf72a5c6,Cassandra,Perkins,c*********************t,4*************8,1955-12-16,2024-04-08,62,498959.88,Male,ACTIVE,BRONZE,826,False,2023-12-11 08:30:53,2024-06-17 15:15:26,High value account
