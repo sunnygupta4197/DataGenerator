@@ -1,2 +1,0 @@
-order_id,customer_id,shipping_address_id,billing_address_id,order_date,order_time,status,subtotal,tax_amount,shipping_cost,total_amount,payment_method,notes
-ORD-1991875,780333,605f8651-4942-418b-bd33-1eb7ab56f576,605f8651-4942-418b-bd33-1eb7ab56f576,2023-08-30,14:45:00,DELIVERED,6912.3,464.79,14.54,8882.27,DEBIT_CARD,Rush delivery requested

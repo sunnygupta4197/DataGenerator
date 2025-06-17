@@ -1,2 +1,0 @@
-line_item_id,order_id,product_id,quantity,unit_price,discount_amount,line_total
-LI-26049692,ORD-1991875,PROD-123459,1,90.73,46.8,10491.73

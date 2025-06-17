@@ -1,2 +1,0 @@
-order_id,customer_id,shipping_address_id,billing_address_id,order_date,order_time,status,subtotal,tax_amount,shipping_cost,total_amount,payment_method,notes
-ORD-5788114,375608,4f5da82e-cfd2-4719-a930-1ca7bf72a5c6,4f5da82e-cfd2-4719-a930-1ca7bf72a5c6,2024-07-28,22:00:00,DELIVERED,8708.03,701.03,36.51,617.12,CREDIT_CARD,Special handling required

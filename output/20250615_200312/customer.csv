@@ -1,2 +1,0 @@
-customer_id,address_id,first_name,last_name,email,phone_number,date_of_birth,registration_date,age,income,gender,customer_status,loyalty_tier,credit_score,marketing_opt_in,created_at,updated_at,notes
-796039,92757bc8-4281-41be-9054-6afaa9e12021,Michelle,Garcia,s*********************g,5*************2,2002-05-24,2024-09-27,45,357655.57,Female,ACTIVE,BRONZE,514,False,2021-10-13 20:38:30,2023-05-23 11:00:12,High value account

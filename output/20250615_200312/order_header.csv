@@ -1,2 +1,0 @@
-order_id,customer_id,shipping_address_id,billing_address_id,order_date,order_time,status,subtotal,tax_amount,shipping_cost,total_amount,payment_method,notes
-ORD-5631984,796039,92757bc8-4281-41be-9054-6afaa9e12021,92757bc8-4281-41be-9054-6afaa9e12021,2023-06-02,10:30:00,SHIPPED,7031.48,396.84,29.3,10011.4,CREDIT_CARD,Weekend delivery preferred
