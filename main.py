@@ -731,7 +731,11 @@ class OptimizedDataGenerationOrchestrator:
                 "quality_analysis_enabled": self.config.validation.enable_data_quality_analysis,
                 "security_enabled": self.config.security.enable_data_masking,
                 "business_rules_enabled": getattr(self.config.validation, 'enable_business_rules', False),
-                "anomaly_detection_enabled": getattr(self.config.validation, 'enable_anomaly_detection', False)
+                "anomaly_detection_enabled": getattr(self.config.validation, 'enable_anomaly_detection', False),
+                "ai_enabled": {
+                    'openai': self.config.ai.openai.enabled,
+                    'mistral': self.config.ai.mistral.enabled
+                }
             },
             "performance_summary": {
                 "total_duration_seconds": total_duration,
@@ -761,6 +765,8 @@ class OptimizedDataGenerationOrchestrator:
             "detailed_statistics": stats,
             "error_details": stats['generation_summary'].get('errors', [])
         }
+
+        print(report)
 
         # Save comprehensive report
         report_path = os.path.join(output_dir, "enhanced_generation_report.json")
