@@ -809,6 +809,7 @@ class OptimizedDataGenerationOrchestrator:
         config = report["configuration_summary"]
         quality = report["quality_metrics"]
         security = report["security_metrics"]
+        print(report)
 
         self.logger.info("=" * 80)
         self.logger.info("🎉 ENHANCED GENERATION SUMMARY")
@@ -831,6 +832,7 @@ class OptimizedDataGenerationOrchestrator:
         self.logger.info(f"Security/Masking: {'✅' if config['security_enabled'] else '❌'}")
         self.logger.info(f"Business Rules: {'✅' if config.get('business_rules_enabled', False) else '❌'}")
         self.logger.info(f"Anomaly Detection: {'✅' if config.get('anomaly_detection_enabled', False) else '❌'}")
+        # self.logger.info(f"AI Model: {'✅' if config.get('ai', False) else '❌'}")
 
         # Quality metrics
         if quality['total_quality_checks'] > 0:

@@ -296,7 +296,7 @@ class BatchGenerator:
 
             # For all other cases, use the existing ValueGenerator logic
             try:
-                generated_value = self.value_generator.generate_by_rule(rule, col_type)
+                generated_value = self.value_generator.generate_by_rule(rule, col_type, col_def['name'])
 
                 # Ensure uniqueness for certain types by appending index
                 if generated_value is not None:
@@ -386,7 +386,7 @@ class BatchGenerator:
                 else:
                     # Generate regular value
                     rule = column.get("rule")
-                    row[column_name] = self.value_generator.generate_by_rule(rule, data_type)
+                    row[column_name] = self.value_generator.generate_by_rule(rule, data_type, column_name)
 
             # Handle nullable columns
             if self.constraint_manager.should_generate_null(column):
@@ -407,7 +407,7 @@ class BatchGenerator:
         rule = column_def.get("rule", {})
 
         def value_generator():
-            return self.value_generator.generate_by_rule(rule, data_type)
+            return self.value_generator.generate_by_rule(rule, data_type, column_name)
 
         return self.constraint_manager.generate_unique_value(table_name, column_name, value_generator, max_attempts)
 
@@ -428,7 +428,7 @@ class BatchGenerator:
                         merged_rule = {**base_rule, **then_rule}
                     else:
                         merged_rule = then_rule
-                    return self.value_generator.generate_by_rule(merged_rule, column_def["type"])
+                    return self.value_generator.generate_by_rule(merged_rule, column_def["type"], column_def["name"])
 
         return None
 
@@ -494,13 +494,13 @@ class DataGenerator:
             table_metadata, batch_size, self._generated_data, foreign_key_data
         )
 
-    def generate_value(self, rule: Any, data_type: str) -> Any:
+    def generate_value(self, rule: Any, data_type: str, column_name: str) -> Any:
         """Generate single value - delegates to ValueGenerator"""
-        return self.value_generator.generate_by_rule(rule, data_type)
+        return self.value_generator.generate_by_rule(rule, data_type, column_name)
 
-    def generate_value_with_distribution(self, rule: Any, data_type: str) -> Any:
+    def generate_value_with_distribution(self, rule: Any, data_type: str, column_name: str) -> Any:
         """Generate value with distribution - same as generate_value for simplicity"""
-        return self.generate_value(rule, data_type)
+        return self.generate_value(rule, data_type, column_name)
 
     def generate_unique_value(self, column_def: Dict, table_name: str, max_attempts: int = 100):
         """Generate unique value"""

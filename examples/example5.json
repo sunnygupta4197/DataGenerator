@@ -28,6 +28,16 @@
             "context_columns": ["country", "continent"],
             "max_length": 100
           }
+        },
+        {
+          "name": "product_category",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "ai_generated",
+            "description": "Generate names of the product category used in banking domain",
+            "max_length": 10
+          }
         }
       ]
     }
@@ -50,7 +60,7 @@
     },
     "mistral": {
       "enabled": true,
-      "api_key": "",
+      "api_key": "EllWzYtgrJO6Z2fYVWMsw4BVXE0OZhT9",
       "model": "mistral-small",
       "max_tokens": 150,
       "temperature": 0.7,

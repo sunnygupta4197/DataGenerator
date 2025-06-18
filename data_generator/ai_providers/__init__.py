@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Dict, Any, Optional
 import logging
 
+from pandas.io.sas.sas_constants import column_name_length_length
+
 
 class AIProvider(Enum):
     """Enumeration of supported AI providers"""
@@ -110,7 +112,6 @@ class AIProviderManager:
             except Exception as e:
                 self.logger.warning(f"{self.active_provider.value} generation failed: {e}")
                 self._provider_stats[self.active_provider.value]["failures"] += 1
-
         # Try fallback providers
         for provider in self.fallback_providers:
             try:

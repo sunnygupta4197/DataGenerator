@@ -47,7 +47,7 @@ class ValueGenerator:
             if rule.get("type") == "ai_generated":
                 return self._generate_with_ai_rule(rule, data_type, column_name)
             else:
-                result = self._generate_from_dict_rule(rule, data_type)
+                result = self._generate_from_dict_rule(rule, data_type, column_name)
                 if result is not None:
                     return result
 
@@ -177,7 +177,7 @@ class ValueGenerator:
 
         return None
 
-    def _generate_from_dict_rule(self, rule: dict, data_type: str) -> Any:
+    def _generate_from_dict_rule(self, rule: dict, data_type: str, column_name: str) -> Any:
         """Generate value from dictionary rule"""
         rule_type = rule.get("type")
 
@@ -201,13 +201,13 @@ class ValueGenerator:
         if rule_type in generators:
             value = generators[rule_type]()
         else:
-            value = self.generate_by_rule(rule_type, data_type) if rule_type else None
+            value = self.generate_by_rule(rule_type, data_type, column_name) if rule_type else None
 
         if 'prefix' in rule or 'suffix' in rule:
             value = self._apply_prefix_suffix(value, rule)
 
         if rule_type == 'regex' or 'regex' in rule:
-            value = self._apply_regex_validation(value, rule)
+            value = self._apply_regex_validation(value, rule, column_name)
         return value
 
     def _apply_prefix_suffix(self, value: Any, rule: dict) -> Any:
@@ -291,7 +291,7 @@ class ValueGenerator:
             return self.faker.sentence()
         return rstr.xeger(pattern)
 
-    def _apply_regex_validation(self, value: Any, rule: dict) -> Any:
+    def _apply_regex_validation(self, value: Any, rule: dict, column_name: str) -> Any:
         """Apply regex validation with retry logic"""
         rule_regex = rule.get("regex")
         if not rule_regex or value is None:
@@ -308,7 +308,7 @@ class ValueGenerator:
             elif rule_type == "phone_number":
                 base_value = self._generate_phone_matching_regex(rule_regex)
             else:
-                base_value = self.generate_by_rule(rule_type, "str")
+                base_value = self.generate_by_rule(rule_type, "str", column_name)
 
             # Reapply prefix/suffix after regenerating base value
             value = self._apply_prefix_suffix(base_value, rule)
