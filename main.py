@@ -766,8 +766,6 @@ class OptimizedDataGenerationOrchestrator:
             "error_details": stats['generation_summary'].get('errors', [])
         }
 
-        print(report)
-
         # Save comprehensive report
         report_path = os.path.join(output_dir, "enhanced_generation_report.json")
         try:
@@ -838,7 +836,7 @@ class OptimizedDataGenerationOrchestrator:
         self.logger.info(f"Security/Masking: {'✅' if config['security_enabled'] else '❌'}")
         self.logger.info(f"Business Rules: {'✅' if config.get('business_rules_enabled', False) else '❌'}")
         self.logger.info(f"Anomaly Detection: {'✅' if config.get('anomaly_detection_enabled', False) else '❌'}")
-        # self.logger.info(f"AI Model: {'✅' if config.get('ai', False) else '❌'}")
+        self.logger.info(f"AI Model: {'✅' if any(config.get('ai_enabled', {}).values()) else '❌'}")
 
         # Quality metrics
         if quality['total_quality_checks'] > 0:
