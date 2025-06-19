@@ -539,7 +539,8 @@ class OptimizedDataGenerationOrchestrator:
         self.logger.info(f"💾 Max memory: {self.config.performance.max_memory_mb}MB")
         self.logger.info(f"🔄 Streaming enabled: {self.config.performance.enable_streaming}")
         self.logger.info(f"🔒 Security enabled: {self.config.security.enable_data_masking}")
-        self.logger.info(f"🤖 OpenAI enabled: {self.config.openai.enabled}")
+        self.logger.info(f"🤖 OpenAI enabled: {self.config.ai.openai.enabled}")
+        self.logger.info(f"🤖 Mistral enabled: {self.config.ai.mistral.enabled}")
         self.logger.info(f"📁 Output directory: {output_dir}")
 
         # Process tables in dependency order
@@ -813,7 +814,6 @@ class OptimizedDataGenerationOrchestrator:
         config = report["configuration_summary"]
         quality = report["quality_metrics"]
         security = report["security_metrics"]
-        print(report)
 
         self.logger.info("=" * 80)
         self.logger.info("🎉 ENHANCED GENERATION SUMMARY")
