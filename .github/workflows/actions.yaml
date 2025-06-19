@@ -30,5 +30,12 @@ jobs:
       - name: Download input file
         run: curl -L -o input.csv "${{ github.event.inputs.file_url }}"
 
+      - name: Check downloaded file
+        run: |
+          echo "Downloaded file details:"
+          ls -lh input_file.csv
+          echo "First 10 lines of input_file.csv:"
+          head -n 10 input_file.csv
+
       - name: Run Python script
         run: python main.py -c input_file.csv -r ${{ github.event.inputs.rows }} --enable_all_features
