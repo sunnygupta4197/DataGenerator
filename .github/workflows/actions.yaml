@@ -10,7 +10,7 @@ on:
       file_url:
         description: 'URL of the input file to download'
         required: true
-        default: 'https://github.com/sunnygupta4197/DataGenerator/blob/master/examples/example5.json'
+        default: 'https://raw.githubusercontent.com/sunnygupta4197/DataGenerator/master/examples/example5.json'
 
 jobs:
   run-script:
