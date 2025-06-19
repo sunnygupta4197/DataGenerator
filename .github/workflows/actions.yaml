@@ -7,6 +7,14 @@ on:
         description: 'Number of rows need to generate'
         required: false
         default: '10'
+      max_workers:
+        description: 'Number of workers need to use'
+        required: false
+        default: 4
+      max_memory_mb:
+        description: 'How much memory needs to use (in MB)'
+        required: false
+        default: 1024
       file_url:
         description: 'URL of the input file to download'
         required: true
@@ -38,7 +46,7 @@ jobs:
           head -n 10 input.csv
 
       - name: Run Python script
-        run: python main.py -c input.csv -r ${{ github.event.inputs.rows }} --enable_all_features --output_dir output_files -f csv
+        run: python main.py -c input.csv -r ${{ github.event.inputs.rows }} --enable_all_features --output_dir output_files -f csv -w ${{ github.event.inputs.max_workers }} -m ${{ github.event.inputs.max_memory_mb }}
 
       - name: Upload output folder
         uses: actions/upload-artifact@v4
