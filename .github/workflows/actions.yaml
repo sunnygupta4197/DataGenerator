@@ -38,4 +38,10 @@ jobs:
           head -n 10 input.csv
 
       - name: Run Python script
-        run: python main.py -c input.csv -r ${{ github.event.inputs.rows }} --enable_all_features
+        run: python main.py -c input.csv -r ${{ github.event.inputs.rows }} --enable_all_features --output_dir output_files -f csv
+
+      - name: Upload output folder
+        uses: actions/upload-artifact@v3
+        with:
+          name: output-folder
+          path: output_files/
