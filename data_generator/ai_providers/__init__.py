@@ -33,7 +33,7 @@ class AIProviderManager:
         # Shared resources
         self._ai_cache = {}  # cache_key -> list of values
         self._cache_usage_count = {}  # cache_key -> current usage index
-        self._default_cache_size = 100
+        self._default_cache_size = 50
         self._cost_tracker = {}  # provider -> cost
 
         # Performance tracking (per provider)
