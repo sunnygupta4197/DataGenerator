@@ -7,13 +7,16 @@
                     "name": "address_id",
                     "type": "str",
 					"constraint": ["PK"],
-                    "rule": "uuid"
+                    "rule":  "uuid"
                 },
                 {
                     "name": "address",
                     "type": "str",
                     "nullable": true,
-                    "rule": "address"
+                    "rule": {
+                        "type": "address",
+                        "multi_line": false
+                    }
                 }
 			]
 		},
@@ -57,10 +60,9 @@
                     "type": "str",
                     "nullable": true,
                     "rule": {
-                        "type": "phone_number",
-                        "regex": "^\\+?[0-9]{10,15}$"
-                    },
-                    "sensitivity": "PII"
+                        "type": "regex",
+                        "regex": "[0-9]{10,15}$"
+                    }
                 },
                 {
                     "name": "date_of_birth",
@@ -83,7 +85,7 @@
                 },
                 {
                     "name": "address_id",
-                    "type": "uuid",
+                    "type": "str",
                     "nullable": true
                 },
                 {
@@ -190,6 +192,12 @@
         }
     ],
     "locale": "en_GB",
-    "rows": 20000
+    "rows": 20000,
+    "output": {
+        "format": "csv",
+        "directory": "./output/{timestamp}",
+        "filename_template": "{table_name}",
+        "csv_delimiter": "|"
+      }
 }
 

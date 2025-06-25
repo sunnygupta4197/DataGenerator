@@ -8,6 +8,7 @@ from traceback import print_exc
 import sys
 
 import pandas as pd
+from anyio.streams import file
 
 from constraint_manager.optimized_constraint_manager import OptimizedConstraintManager
 from validators.unified_validation_system import UnifiedValidator
@@ -530,7 +531,6 @@ class OptimizedDataGenerationOrchestrator:
         """Main orchestration method using enhanced parallel components"""
 
         # Setup
-        os.makedirs(output_dir, exist_ok=True)
         start_time = datetime.now()
 
         self.logger.info(f"🚀 Starting ENHANCED data generation process")
@@ -586,7 +586,7 @@ class OptimizedDataGenerationOrchestrator:
                         all_foreign_key_data[key] = all_foreign_key_data[key][-50000:]
 
                 # Export data to file using appropriate writer
-                self._export_table_data(generated_records, table_metadata, output_dir)
+                self._export_table_data(generated_records, table_metadata)
 
                 # Memory status logging
                 current_memory = self.generation_engine.parallel_generator.memory_monitor.get_memory_usage()
@@ -607,7 +607,7 @@ class OptimizedDataGenerationOrchestrator:
         end_time = datetime.now()
         total_duration = (end_time - start_time).total_seconds()
 
-        self._generate_enhanced_final_report(total_duration, output_dir)
+        self._generate_enhanced_final_report(total_duration)
 
         self.logger.info(f"🎉 Enhanced data generation completed in {total_duration:.2f} seconds!")
 
@@ -676,7 +676,7 @@ class OptimizedDataGenerationOrchestrator:
 
         return constraints
 
-    def _export_table_data(self, data: List[Dict], table_metadata: Dict, output_dir: str):
+    def _export_table_data(self, data: List[Dict], table_metadata: Dict):
         """Export table data to file using appropriate writer"""
         if not data:
             self.logger.warning(f"⚠️ No data to export for table {table_metadata.get('table_name', 'unknown')}")
@@ -703,7 +703,7 @@ class OptimizedDataGenerationOrchestrator:
                 writer = writer_class(
                     data=df,
                     table_metadata=table_metadata,
-                    output_dir=output_dir,
+                    output_config=self.config.output,
                     batch_size=10000,
                     logger=self.logger
                 )
@@ -714,9 +714,10 @@ class OptimizedDataGenerationOrchestrator:
         else:
             self.logger.error(f"❌ Unsupported output format: {output_format}")
 
-    def _generate_enhanced_final_report(self, total_duration: float, output_dir: str):
+    def _generate_enhanced_final_report(self, total_duration: float):
         """Generate comprehensive enhanced final report"""
         stats = self.generation_engine.get_comprehensive_statistics()
+        output_dir = self.config.output.directory
 
         # Enhanced report with all new capabilities
         report = {
@@ -1051,6 +1052,8 @@ def apply_command_line_overrides(config: GenerationConfig, args):
         config.performance.batch_size = args.batch_size
     if args.format:
         config.output.format = args.format
+    if args.output_dir:
+        config.output.change_directory(args.output_dir)
     if args.log_level:
         config.logging.level = args.log_level
 

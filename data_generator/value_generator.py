@@ -206,9 +206,20 @@ class ValueGenerator:
         if 'prefix' in rule or 'suffix' in rule:
             value = self._apply_prefix_suffix(value, rule)
 
+        if not rule.get('multi_line', True):
+            value = self.handle_multi_line(value)
+
         if rule_type == 'regex' or 'regex' in rule:
             value = self._apply_regex_validation(value, rule, column_name)
         return value
+
+    def handle_multi_line(self, value: Any) -> Any:
+        """Handle multi line value"""
+        if value is None:
+            return None
+
+        str_value = str(value)
+        return str_value.replace("\n", " ")
 
     def _apply_prefix_suffix(self, value: Any, rule: dict) -> Any:
         """Apply prefix and/or suffix to generated value"""

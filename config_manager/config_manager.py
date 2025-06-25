@@ -506,26 +506,62 @@ class OutputConfig:
     json_indent: int = 2
     parquet_engine: str = "pyarrow"
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     def __post_init__(self):
-        """Validate output configuration"""
-        valid_formats = ["csv", "json", "jsonl", "parquet", "sql_query", "xlsx"]
+        """Validate output configuration and setup directory"""
+        self._setup_output_directory()
+    
+    def _setup_output_directory(self):
+        """Setup output directory"""
+        valid_formats = ["csv", "json", "jsonl", "parquet", "sql_query", "xlsx", "dsv"]
         if self.format not in valid_formats:
             print(f"Warning: Invalid format '{self.format}', defaulting to 'csv'")
             self.format = "csv"
 
         # Create output directory if it doesn't exist
+        self.directory = self.directory.format(timestamp=self.timestamp)
+
         if self.create_directory and not os.path.exists(self.directory):
             try:
                 os.makedirs(self.directory, exist_ok=True)
             except Exception as e:
                 print(f"Warning: Could not create output directory {self.directory}: {e}")
+                
+    def change_directory(self, new_directory: str, cleanup_old: bool = True):
+        """Change output directory and optionally cleanup_old one"""
+        old_directory = getattr(self, 'directory', None)
+
+        self.directory = f'{new_directory}/{self.timestamp}'
+
+        if cleanup_old and old_directory and os.path.exists(old_directory):
+            self._cleanup_directory_tree(old_directory)
+
+        self._setup_output_directory()
+
+    def _cleanup_directory_tree(self, directory_path: str):
+        """Delete directory and its parent directories if they are empty"""
+        try:
+            current_dir = os.path.abspath(directory_path)
+            while current_dir and current_dir != os.path.dirname(current_dir):
+                if os.path.exists(current_dir):
+                    if not os.listdir(current_dir):
+                        os.rmdir(current_dir)
+                        print(f'Deleted empty directory: {current_dir}')
+                        current_dir = os.path.dirname(current_dir)
+                    else:
+                        print(f'Directory not empty, keeping: {current_dir}')
+                        break
+                else:
+                    break
+        except OSError as e:
+            print(f"Warning: Could not remove {current_dir}: {e}")
 
     def get_output_path(self, table_name: str) -> str:
         """Generate output file path for a table"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = self.filename_template.format(
             table_name=table_name,
-            timestamp=timestamp
+            timestamp=self.timestamp
         )
 
         # Add file extension
