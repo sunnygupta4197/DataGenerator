@@ -21,6 +21,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from abc import ABC, abstractmethod
 import time
+import inspect
 
 # Optional pandas import for enhanced type detection
 try:
@@ -934,53 +935,57 @@ class WriterFactory:
     """
     Factory class for creating streaming writers based on file extension or format
     """
+    def __init__(self, table_name, output_config):
+        self.table_name = table_name
+        self.output_config = output_config
+        self.file_path = output_config.get_output_path(table_name)
+        self.format_type = output_config.format
 
-    @staticmethod
-    def create_writer(file_path: str, format_type: Optional[str] = None,
-                      **kwargs) -> StreamingWriter:
-        """
-        Create appropriate streaming writer based on file path or format
+    def filter_kwargs_for_class(self, cls, kwargs):
+        # Get the parameter names from the class's __init__ method
+        init_params = inspect.signature(cls.__init__).parameters
+        valid_keys = [k for k in init_params if k != 'self']
 
-        Args:
-            file_path: Output file path
-            format_type: Explicit format type override
-            **kwargs: Additional arguments for specific writers
+        # Filter kwargs to include only valid keys
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
+        return filtered_kwargs
 
-        Returns:
-            StreamingWriter: Appropriate writer instance
-        """
-        if format_type:
-            writer_format = format_type.lower()
+    def create_writer(self, **kwargs) -> StreamingWriter:
+        if self.format_type:
+            writer_format = self.format_type.lower()
         else:
-            # Infer format from file extension
-            _, ext = os.path.splitext(file_path)
+            _, ext = os.path.splitext(self.file_path)
             writer_format = ext.lower().lstrip('.')
 
         if writer_format in ['csv', 'tsv']:
+            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
             delimiter = '\t' if writer_format == 'tsv' else kwargs.get('delimiter', ',')
-            return StreamingCSVWriter(file_path, delimiter=delimiter, **kwargs)
+            return StreamingCSVWriter(self.file_path, delimiter=delimiter, **filtered)
 
         elif writer_format in ['json', 'jsonl']:
+            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
             format_type = 'jsonl' if writer_format == 'jsonl' else kwargs.get('format_type', 'jsonl')
-            return StreamingJSONWriter(file_path, format_type=format_type, **kwargs)
+            return StreamingJSONWriter(self.file_path, format_type=format_type, **filtered)
 
         elif writer_format == 'parquet':
-            return StreamingParquetWriter(file_path, **kwargs)
+            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
+            return StreamingParquetWriter(self.file_path, **filtered)
 
         elif writer_format in ['xlsx', 'excel']:
-            return StreamingExcelWriter(file_path, **kwargs)
+            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
+            return StreamingExcelWriter(self.file_path, **filtered)
 
         elif writer_format in ['dat', 'txt', 'fixed', 'fixedwidth']:
-            return StreamingFixedWidthWriter(file_path, **kwargs)
+            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
+            return StreamingFixedWidthWriter(self.file_path, **filtered)
 
         else:
             raise ValueError(
                 f"Unsupported format: {writer_format}. "
-                f"Supported formats: csv, tsv, json, jsonl, parquet, xlsx, dat, txt, fixed"
+                f"Supported formats: {', '.join(self.get_supported_formats())}"
             )
 
-    @staticmethod
-    def get_supported_formats() -> List[str]:
+    def get_supported_formats(self) -> List[str]:
         """Get list of supported output formats"""
         return ['csv', 'tsv', 'json', 'jsonl', 'parquet', 'xlsx', 'dat', 'txt', 'fixed']
 

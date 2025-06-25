@@ -112,6 +112,7 @@ class ParallelDataGenerator:
             logger: Logger instance
         """
         self.data_generator = data_generator_instance
+        self.output_config = data_generator_instance.config.output
         self.logger = logger or logging.getLogger(__name__)
         self.enable_streaming = enable_streaming
 
@@ -170,9 +171,7 @@ class ParallelDataGenerator:
 
     def generate_streaming(self, table_metadata: Dict[str, Any],
                            total_records: int,
-                           foreign_key_data: Dict[str, List] = None,
-                           output_path: str = None,
-                           output_format: str = 'csv') -> Iterator[List[Dict[str, Any]]]:
+                           foreign_key_data: Dict[str, List] = None) -> Iterator[List[Dict[str, Any]]]:
         """
         Generate data in streaming fashion using the sophisticated DataGenerator
         """
@@ -182,12 +181,12 @@ class ParallelDataGenerator:
         batch_size = self.streaming_batch_size
         total_batches = (total_records + batch_size - 1) // batch_size
 
+        table_name = table_metadata.get('table_name', 'unknown')
+
         # Initialize streaming writer if output path provided
-        writer = None
-        if output_path:
-            writer = self._create_streaming_writer(output_path, output_format)
-            columns = [col['name'] for col in table_metadata.get('columns', [])]
-            writer.write_header(columns)
+        writer = self._create_streaming_writer(table_name)
+        columns = [col['name'] for col in table_metadata.get('columns', [])]
+        writer.write_header(columns)
 
         start_time = time.time()
 
@@ -206,7 +205,6 @@ class ParallelDataGenerator:
                 )
 
                 # Store the batch in the DataGenerator for FK relationships
-                table_name = table_metadata.get('table_name', 'unknown')
                 self.data_generator.store_generated_batch(table_name, batch_data)
 
                 # Update statistics
@@ -233,21 +231,20 @@ class ParallelDataGenerator:
             # Update timing statistics
             self.stats['generation_time'] = time.time() - start_time
 
-    def _create_streaming_writer(self, output_path: str, output_format: str) -> StreamingWriter:
+    def _create_streaming_writer(self, table_name) -> StreamingWriter:
         """Create appropriate streaming writer using WriterFactory"""
         try:
-            return WriterFactory.create_writer(
-                output_path,
-                format_type=output_format,
+            writer_factory = WriterFactory(table_name, self.output_config)
+            return writer_factory.create_writer(
                 enable_progress=True,
                 logger=self.logger,
-                **self.data_generator.config.output
+                **self.output_config.__dict__
             )
         except ValueError as e:
             self.logger.error(f"Failed to create writer: {e}")
             # Fallback to CSV if format is unsupported
             self.logger.warning("Falling back to CSV format")
-            return StreamingCSVWriter(output_path, enable_progress=True, logger=self.logger)
+            return StreamingCSVWriter(self.output_config.directory, enable_progress=True, logger=self.logger)
 
     # ===================== PARALLEL GENERATION =====================
 
@@ -420,8 +417,6 @@ class ParallelDataGenerator:
     def generate_streaming_parallel(self, table_metadata: Dict[str, Any],
                                     total_records: int,
                                     foreign_key_data: Dict[str, List] = None,
-                                    output_path: str = None,
-                                    output_format: str = 'csv',
                                     batch_size: int = None) -> Iterator[List[Dict[str, Any]]]:
         """
         Combine streaming and parallel processing using the sophisticated DataGenerator
@@ -431,16 +426,16 @@ class ParallelDataGenerator:
 
         if batch_size is None:
             batch_size = self.streaming_batch_size * self.max_workers
+        table_name = table_metadata.get('table_name', 'unknown')
 
         # Initialize streaming writer
-        writer = None
-        if output_path:
-            writer = self._create_streaming_writer(output_path, output_format)
-            columns = [col['name'] for col in table_metadata.get('columns', [])]
-            writer.write_header(columns)
+        writer = self._create_streaming_writer(table_name)
+        columns = [col['name'] for col in table_metadata.get('columns', [])]
+        writer.write_header(columns)
 
         start_time = time.time()
         total_batches = (total_records + batch_size - 1) // batch_size
+
 
         try:
             for batch_idx in range(total_batches):
@@ -457,7 +452,6 @@ class ParallelDataGenerator:
                 )
 
                 # Store in DataGenerator for FK relationships
-                table_name = table_metadata.get('table_name', 'unknown')
                 self.data_generator.store_generated_batch(table_name, batch_data)
 
                 # Write to file if writer provided
@@ -488,9 +482,7 @@ class ParallelDataGenerator:
 
     def generate_adaptive(self, table_metadata: Dict[str, Any],
                           total_records: int,
-                          foreign_key_data: Dict[str, List] = None,
-                          output_path: str = None,
-                          output_format: str = 'csv') -> Iterator[List[Dict[str, Any]]]:
+                          foreign_key_data: Dict[str, List] = None) -> Iterator[List[Dict[str, Any]]]:
         """
         Adaptive generation that chooses optimal strategy using the sophisticated DataGenerator
         """
@@ -511,14 +503,14 @@ class ParallelDataGenerator:
             # Medium dataset - use streaming with parallel batches
             self.logger.info("Using streaming + parallel generation strategy")
             yield from self.generate_streaming_parallel(
-                table_metadata, total_records, foreign_key_data, output_path, output_format
+                table_metadata, total_records, foreign_key_data
             )
 
         else:
             # Large dataset - use pure streaming
             self.logger.info("Using streaming generation strategy")
             yield from self.generate_streaming(
-                table_metadata, total_records, foreign_key_data, output_path, output_format
+                table_metadata, total_records, foreign_key_data
             )
 
     def _estimate_memory_requirements(self, table_metadata: Dict[str, Any], total_records: int) -> float:

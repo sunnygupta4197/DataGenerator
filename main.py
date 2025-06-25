@@ -208,9 +208,7 @@ class OptimizedDataGenerationEngine:
         for batch in self.parallel_generator.generate_streaming(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data,
-                output_path=output_path,
-                output_format=output_format
+                foreign_key_data=foreign_key_data
         ):
             batch_count += 1
 
@@ -282,9 +280,7 @@ class OptimizedDataGenerationEngine:
         for batch in self.parallel_generator.generate_adaptive(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data,
-                output_path=output_path,
-                output_format=output_format
+                foreign_key_data=foreign_key_data
         ):
             if isinstance(batch, list) and len(batch) > 0:
                 all_data.extend(batch)
