@@ -15,7 +15,7 @@ from validators.unified_validation_system import UnifiedValidator
 from data_generator.streaming_data_generator import ParallelDataGenerator, DataQualityAnalyzer, SecurityManager, \
     PerformanceProfiler
 from config_manager.config_manager import ConfigurationManager, GenerationConfig
-from writers.writer import CSVWriter, ParquetWriter, JsonWriter, SQLQueryWriter
+from writers.writer import CSVWriter, ParquetWriter, JsonWriter, SQLQueryWriter, FixedWidthWriter
 from data_generator.data_generator import DataGenerator
 
 
@@ -694,7 +694,9 @@ class OptimizedDataGenerationOrchestrator:
             "json": JsonWriter,
             "jsonl": JsonWriter,
             "parquet": ParquetWriter,
-            "sql_query": SQLQueryWriter
+            "sql_query": SQLQueryWriter,
+            'fwf': FixedWidthWriter,
+            'fixed': FixedWidthWriter,
         }
 
         writer_class = writers.get(output_format)
@@ -1018,7 +1020,7 @@ Features:
 
     # Output options
     parser.add_argument('--format', '-f',
-                        choices=['csv', 'json', 'jsonl', 'parquet', 'sql_query'],
+                        choices=['csv', 'json', 'jsonl', 'parquet', 'sql_query', 'fwf', 'fixed'],
                         help='Output file format')
     parser.add_argument('--compression',
                         choices=['gzip', 'snappy', 'lz4'],

@@ -2,6 +2,7 @@ import sys
 import re
 from typing import Dict, Any, Tuple, List, Optional, Set
 import copy
+from datetime import datetime
 
 
 class SchemaValidator:
@@ -9,7 +10,7 @@ class SchemaValidator:
         self.errors = []
         self.warnings = []
         self.suggestions = []
-        self.critical_errors = []  # New: Store critical errors separately
+        self.critical_errors = []
         self.corrected_schema = None
         self.table_registry = {}
 
@@ -20,7 +21,30 @@ class SchemaValidator:
         self._email_pattern = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
         self._phone_pattern = re.compile(r'^\+?[\d\s\-\(\)]{10,15}$')
 
-    def validate_schema(self, schema: Dict[str, Any]) -> Tuple[List[str], List[str], List[str], List[str], Dict[str, Any]]:
+        # Date format validation patterns
+        self._date_format_patterns = {
+            'DD': r'(?:0[1-9]|[12][0-9]|3[01])',
+            'D': r'(?:[1-9]|[12][0-9]|3[01])',
+            'MM': r'(?:0[1-9]|1[012])',
+            'M': r'(?:[1-9]|1[012])',
+            'YYYY': r'\d{4}',
+            'YY': r'\d{2}',
+            'MMMM': r'(?:January|February|March|April|May|June|July|August|September|October|November|December)',
+            'MMM': r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)',
+            'HH': r'(?:[01][0-9]|2[0-3])',
+            'H': r'(?:[0-9]|1[0-9]|2[0-3])',
+            'hh': r'(?:0[1-9]|1[012])',
+            'h': r'(?:[1-9]|1[012])',
+            'mm': r'(?:[0-5][0-9])',
+            'm': r'(?:[0-9]|[1-5][0-9])',
+            'ss': r'(?:[0-5][0-9])',
+            's': r'(?:[0-9]|[1-5][0-9])',
+            'A': r'(?:AM|PM)',
+            'a': r'(?:am|pm)'
+        }
+
+    def validate_schema(self, schema: Dict[str, Any]) -> Tuple[
+        List[str], List[str], List[str], List[str], Dict[str, Any]]:
         """Main validation method - now returns critical_errors as well"""
         self._reset_state()
 
@@ -124,7 +148,6 @@ class SchemaValidator:
 
         self._validate_primary_keys(table, table_name)
         self._validate_all_columns(table, table_name, total_rows, table_index)
-
         self._validate_row_capacity_constraints(table, table_name, total_rows, table_index)
 
         foreign_keys = table.get('foreign_keys')
@@ -351,89 +374,6 @@ class SchemaValidator:
 
         return suggestions
 
-    def _apply_capacity_correction(self, column: Dict[str, Any], table_name: str, col_name: str,
-                                   table_index: int, col_index: int, required_capacity: int,
-                                   suggestions: List[str]) -> bool:
-        """Apply automatic corrections for capacity issues where possible"""
-        col_type = column.get('type', '').lower()
-        rule = column.get('rule', {})
-        length_constraint = column.get('length')
-
-        # Auto-correct by converting length to rule for numeric types (PRIORITY CORRECTION)
-        if isinstance(length_constraint, int) and col_type in {'int', 'integer', 'number'}:
-            # Calculate optimal range that uses the full length capacity
-            min_start_value = 10 ** (length_constraint - 1)  # e.g., 10000000 for length 8
-            max_end_value = (10 ** length_constraint) - 1  # e.g., 99999999 for length 8
-
-            available_range = max_end_value - min_start_value + 1
-
-            if available_range >= required_capacity:
-                # Convert length to rule with optimal range
-                suggested_max = min_start_value + required_capacity - 1
-
-                # Create new rule
-                new_rule = {
-                    'type': 'range',
-                    'min': min_start_value,
-                    'max': suggested_max
-                }
-
-                # Apply corrections
-                self._apply_correction(table_index, col_index, 'rule', rule, new_rule,
-                                       'converted_length_to_rule_for_capacity')
-                self._apply_correction(table_index, col_index, 'length', length_constraint, None,
-                                       'removed_length_after_rule_conversion_for_capacity')
-
-                self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
-                                     f"Converted length {length_constraint} to rule range "
-                                     f"{{min: {min_start_value:,}, max: {suggested_max:,}}} "
-                                     f"to accommodate {required_capacity:,} rows")
-                return True
-            else:
-                # Need bigger range - increase digits and convert to rule
-                required_digits = len(str(required_capacity + min_start_value - 1))
-                new_min_start = 10 ** (required_digits - 1)
-                new_max_end = new_min_start + required_capacity - 1
-
-                new_rule = {
-                    'type': 'range',
-                    'min': new_min_start,
-                    'max': new_max_end
-                }
-
-                # Apply corrections
-                self._apply_correction(table_index, col_index, 'rule', rule, new_rule,
-                                       'expanded_length_to_rule_for_capacity')
-                self._apply_correction(table_index, col_index, 'length', length_constraint, None,
-                                       'removed_length_after_expansion_for_capacity')
-
-                self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
-                                     f"Expanded capacity by converting length {length_constraint} to rule range "
-                                     f"{{min: {new_min_start:,}, max: {new_max_end:,}}} "
-                                     f"to accommodate {required_capacity:,} rows")
-                return True
-
-        # Auto-correct existing range rule
-        elif isinstance(rule, dict) and rule.get('type') == 'range':
-            current_min = rule.get('min', 0)
-            current_max = rule.get('max')
-
-            if current_max is not None:
-                new_max = current_min + required_capacity - 1
-                new_rule = rule.copy()
-                new_rule['max'] = new_max
-
-                self._apply_correction(table_index, col_index, 'rule', rule, new_rule,
-                                       'increased_range_max_for_row_capacity')
-                return True
-
-        # Auto-correct type for capacity overflow
-        elif col_type == 'int' and required_capacity > 2 ** 31:
-            self._apply_correction(table_index, col_index, 'type', 'int', 'bigint',
-                                   'upgraded_int_to_bigint_for_capacity')
-            return True
-
-        return False
     def _validate_primary_keys(self, table: Dict[str, Any], table_name: str):
         """Validate primary key constraints - optimized counting"""
         pk_count = 0
@@ -556,10 +496,6 @@ class SchemaValidator:
 
                     self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
                                          f"Length {length_constraint} converted to rule range {{\"min\": {min_val}, \"max\": {max_val}}} and length removed")
-                # else:
-                #     For non-numeric types, keep as fixed character length
-                    # self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
-                    #                         f"Fixed character length {length_constraint} maintained for {column.get('type', 'unknown')} type")
             elif length_constraint == 1:
                 # Length 1 stays as fixed length for single digits (0-9) or single character
                 pass  # Keep as is
@@ -615,6 +551,7 @@ class SchemaValidator:
                                     f"since rule range {rule_min}-{rule_max} is more specific")
             self._apply_correction(table_index, col_index, 'length', length_constraint, None,
                                    'removed_redundant_with_rule_range')
+
     def _should_convert_to_digit_range(self, column: Dict[str, Any]) -> bool:
         """Determine if column should have length converted to digit range based on type and rule"""
         col_type = column.get('type', '').lower()
@@ -721,15 +658,6 @@ class SchemaValidator:
             return constraints
         else:
             return []
-        """Get constraints as a normalized list - optimized"""
-        constraints = column.get('constraints') or column.get('constraint', [])
-
-        if isinstance(constraints, str):
-            return [constraints]
-        elif isinstance(constraints, list):
-            return constraints
-        else:
-            return []
 
     def _analyze_constraints(self, constraints: List[str], column: Dict[str, Any]) -> Dict[str, bool]:
         """Analyze constraint implications - using set for faster lookups"""
@@ -751,19 +679,356 @@ class SchemaValidator:
         # Basic rule structure validation
         self._validate_basic_rule_structure(rule, table_name, col_name)
 
+        # NEW: Validate date/time format fields
+        self._validate_date_time_format(rule, table_name, col_name, table_index, col_index)
+
         # Special rule type handling - optimized with dict dispatch
         rule_handlers = {
             'choice': self._handle_choice_rule,
             'range': self._handle_range_rule_for_pk,
-            'sequence': self._handle_sequence_rule_for_pk
+            'sequence': self._handle_sequence_rule_for_pk,
+            'date_range': self._handle_date_range_rule,
+            'time_range': self._handle_time_range_rule,
+            'timestamp_range': self._handle_timestamp_range_rule
         }
 
         handler = rule_handlers.get(rule_type)
         if handler:
             if rule_type == 'choice':
                 handler(column, table_name, col_name, table_index, col_index, rule, length_constraint)
+            elif rule_type in ['date_range', 'time_range', 'timestamp_range']:
+                handler(column, table_name, col_name, table_index, col_index, rule)
             elif self._analyze_constraints(self._get_constraints(column), column)['is_primary_key']:
                 handler(column, table_name, col_name, table_index, col_index, rule, length_constraint)
+
+    def _validate_date_time_format(self, rule: Dict[str, Any], table_name: str, col_name: str,
+                                   table_index: int, col_index: int):
+        """Validate and convert date/time format field from human-readable to Python format"""
+        rule_type = rule.get('type', '').lower()
+        format_field = rule.get('format')
+
+        if format_field is None:
+            return  # Format is optional
+
+        if not isinstance(format_field, str):
+            self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                               f"Format field must be a string, got {type(format_field).__name__}")
+            # Remove invalid format
+            new_rule = {k: v for k, v in rule.items() if k != 'format'}
+            self._apply_correction(table_index, col_index, 'rule', rule, new_rule,
+                                   'removed_invalid_format_type')
+            return
+
+        # Convert human-readable format to Python strftime format
+        if rule_type in ['date', 'date_range', 'time', 'time_range', 'timestamp', 'timestamp_range']:
+            converted_format = self._convert_human_format_to_python(format_field, rule_type)
+
+            if converted_format != format_field:
+                # Update the rule with converted format
+                new_rule = rule.copy()
+                new_rule['format'] = converted_format
+                self._apply_correction(table_index, col_index, 'rule', rule, new_rule,
+                                       'converted_human_format_to_python')
+                self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
+                                     f"Format converted from '{format_field}' to '{converted_format}'")
+
+    def _convert_human_format_to_python(self, format_string: str, rule_type: str) -> str:
+        """Convert human-readable format patterns to Python strftime patterns"""
+        # First, auto-correct common mistakes
+        corrected_format = self._auto_correct_format_mistakes(format_string)
+
+        # Simple and safe replacement - only use non-conflicting patterns
+        python_format = corrected_format
+
+        # Only include patterns that won't cause conflicts
+        # Exclude single-character patterns that could match within already-converted patterns
+        replacements = [
+            # Date patterns - multi-character only
+            ('MMMM', '%B'),  # Full month name
+            ('MMM', '%b'),  # Abbreviated month name
+            ('YYYY', '%Y'),  # 4-digit year
+            ('dddd', '%A'),  # Full day name
+            ('ddd', '%a'),  # Abbreviated day name
+            ('DD', '%d'),  # Day with leading zero
+            ('MM', '%m'),  # Month with leading zero
+            ('YY', '%y'),  # 2-digit year
+
+            # Time patterns - multi-character only
+            ('HH', '%H'),  # Hour 24-format with leading zero
+            ('hh', '%I'),  # Hour 12-format with leading zero
+            ('mm', '%M'),  # Minute with leading zero
+            ('ss', '%S'),  # Second with leading zero
+
+            # AM/PM patterns
+            ('AM', '%p'),  # AM/PM uppercase
+            ('PM', '%p'),  # AM/PM uppercase
+            ('am', '%p'),  # AM/PM lowercase
+            ('pm', '%p'),  # AM/PM lowercase
+            ('A', '%p'),  # AM/PM single char (safe as it's not in converted patterns)
+            ('a', '%p'),  # AM/PM single char (safe as it's not in converted patterns)
+        ]
+
+        # Apply replacements one by one
+        for human_pattern, python_pattern in replacements:
+            python_format = python_format.replace(human_pattern, python_pattern)
+
+        # Validate the resulting Python format
+        self._validate_python_format(python_format, rule_type, format_string)
+
+        return python_format
+
+    def _auto_correct_format_mistakes(self, format_string: str) -> str:
+        """Auto-correct common format mistakes"""
+        # Common format mistakes and their corrections
+        corrections = {
+            # Case corrections
+            'dd': 'DD',
+            'yyyy': 'YYYY',
+            'yy': 'YY',
+
+            # Word-based corrections
+            'min': 'mm',  # minutes
+            'minute': 'mm',
+            'minutes': 'mm',
+            'sec': 'ss',  # seconds
+            'second': 'ss',
+            'seconds': 'ss',
+            'am': 'A',
+            'pm': 'A',
+            'AM': 'A',
+            'PM': 'A',
+            'month': 'MMMM',
+            'mon': 'MMM',
+            'day': 'DD',
+            'year': 'YYYY'
+        }
+
+        corrected = format_string
+
+        # Apply corrections word by word to avoid partial matches
+        import re
+
+        # Split by non-letter characters to preserve separators
+        parts = re.split(r'([^A-Za-z]+)', corrected)
+
+        for i, part in enumerate(parts):
+            if part in corrections:
+                parts[i] = corrections[part]
+
+        corrected = ''.join(parts)
+
+        return corrected
+
+    def _validate_python_format(self, python_format: str, rule_type: str, original_format: str):
+        """Validate the converted Python format string"""
+        try:
+            # Test the format with a sample datetime
+            test_datetime = datetime(2023, 12, 25, 14, 30, 45)
+
+            if rule_type in ['date', 'date_range']:
+                test_datetime.date().strftime(python_format)
+            elif rule_type in ['time', 'time_range']:
+                test_datetime.strftime(python_format)
+            elif rule_type in ['timestamp', 'timestamp_range']:
+                test_datetime.strftime(python_format)
+
+        except ValueError as e:
+            self.warnings.append(f"Converted format '{python_format}' (from '{original_format}') "
+                                 f"may be invalid: {str(e)}")
+
+    def _validate_date_format_pattern(self, format_pattern: str, table_name: str, col_name: str,
+                                      table_index: int, col_index: int, rule: Dict[str, Any]):
+        """Simplified validation - just check if format is reasonable"""
+        # Basic validation - check for obviously invalid patterns
+        if not format_pattern.strip():
+            self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                               f"Date format cannot be empty")
+            return
+
+        # Check for some common date components
+        has_day = any(pattern in format_pattern for pattern in ['DD', 'D', 'dd', 'd'])
+        has_month = any(pattern in format_pattern for pattern in ['MM', 'M', 'mm', 'MMMM', 'MMM', 'month', 'mon'])
+        has_year = any(pattern in format_pattern for pattern in ['YYYY', 'YY', 'yyyy', 'yy', 'year'])
+
+        missing_components = []
+        if not has_day:
+            missing_components.append('day')
+        if not has_month:
+            missing_components.append('month')
+        if not has_year:
+            missing_components.append('year')
+
+        if missing_components:
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Date format '{format_pattern}' appears to be missing: {', '.join(missing_components)}. "
+                                    f"Consider formats like 'DD/MM/YYYY', 'MM/DD/YYYY', or 'YYYY-MM-DD'")
+
+    def _validate_time_format_pattern(self, format_pattern: str, table_name: str, col_name: str,
+                                      table_index: int, col_index: int, rule: Dict[str, Any]):
+        """Simplified validation - just check if format is reasonable"""
+        if not format_pattern.strip():
+            self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                               f"Time format cannot be empty")
+            return
+
+        # Check for basic time components
+        has_hour = any(pattern in format_pattern for pattern in ['HH', 'H', 'hh', 'h'])
+        has_minute = any(pattern in format_pattern for pattern in ['mm', 'm', 'min'])
+        has_ampm = any(pattern in format_pattern for pattern in ['A', 'a', 'AM', 'PM', 'am', 'pm'])
+
+        # Check for 12/24 hour consistency
+        has_24h = any(pattern in format_pattern for pattern in ['HH', 'H'])
+        has_12h = any(pattern in format_pattern for pattern in ['hh', 'h'])
+
+        if has_24h and has_ampm:
+            self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
+                                 f"Inconsistent time format: 24-hour format with AM/PM. "
+                                 f"Consider using 'hh' or 'h' for 12-hour format")
+
+        if not has_hour:
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Time format missing hour component")
+        if not has_minute:
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Time format missing minute component")
+
+    def _validate_timestamp_format_pattern(self, format_pattern: str, table_name: str, col_name: str,
+                                           table_index: int, col_index: int, rule: Dict[str, Any]):
+        """Simplified validation - just check if format has both date and time parts"""
+        if not format_pattern.strip():
+            self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                               f"Timestamp format cannot be empty")
+            return
+
+        # Check for both date and time components
+        has_date_component = any(pattern in format_pattern for pattern in
+                                 ['DD', 'D', 'MM', 'M', 'YYYY', 'YY', 'dd', 'mm', 'yyyy', 'yy'])
+        has_time_component = any(pattern in format_pattern for pattern in
+                                 ['HH', 'H', 'hh', 'h', 'mm', 'm', 'ss', 's'])
+
+        if not has_date_component:
+            self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
+                                 f"Timestamp format appears to be missing date components")
+        if not has_time_component:
+            self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
+                                 f"Timestamp format appears to be missing time components")
+
+    def _suggest_format_corrections(self, invalid_token: str, valid_patterns: List[str]) -> List[str]:
+        """Suggest corrections for invalid format tokens - simplified"""
+        suggestions = []
+        invalid_lower = invalid_token.lower()
+
+        # Basic common corrections
+        basic_corrections = {
+            'dd': 'DD', 'd': 'DD',
+            'mm': 'MM', 'm': 'MM',
+            'yyyy': 'YYYY', 'yy': 'YY',
+            'hh': 'HH', 'h': 'HH'
+        }
+
+        if invalid_lower in basic_corrections:
+            suggestions.append(basic_corrections[invalid_lower])
+
+        return suggestions[:2]  # Limit to 2 suggestions
+
+    def _handle_date_range_rule(self, column: Dict[str, Any], table_name: str, col_name: str,
+                                table_index: int, col_index: int, rule: Dict[str, Any]):
+        """Handle date_range rule validation"""
+        start_date = rule.get('start')
+        end_date = rule.get('end')
+
+        # Validate date format in start/end
+        if start_date:
+            if not self._is_valid_date_string(start_date):
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Invalid start date format '{start_date}'. Expected YYYY-MM-DD")
+
+        if end_date:
+            if not self._is_valid_date_string(end_date):
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Invalid end date format '{end_date}'. Expected YYYY-MM-DD")
+
+        # Validate date range logic
+        if start_date and end_date:
+            try:
+                start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+                end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+                if start_dt > end_dt:
+                    self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                       f"Start date '{start_date}' is after end date '{end_date}'")
+            except ValueError as e:
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Date parsing error: {str(e)}")
+
+    def _handle_time_range_rule(self, column: Dict[str, Any], table_name: str, col_name: str,
+                                table_index: int, col_index: int, rule: Dict[str, Any]):
+        """Handle time_range rule validation"""
+        start_time = rule.get('start')
+        end_time = rule.get('end')
+
+        # Validate time format in start/end
+        if start_time:
+            if not self._is_valid_time_string(start_time):
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Invalid start time format '{start_time}'. Expected HH:MM:SS")
+
+        if end_time:
+            if not self._is_valid_time_string(end_time):
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Invalid end time format '{end_time}'. Expected HH:MM:SS")
+
+    def _handle_timestamp_range_rule(self, column: Dict[str, Any], table_name: str, col_name: str,
+                                     table_index: int, col_index: int, rule: Dict[str, Any]):
+        """Handle timestamp_range rule validation"""
+        start_timestamp = rule.get('start')
+        end_timestamp = rule.get('end')
+
+        # Validate timestamp format in start/end
+        if start_timestamp:
+            if not self._is_valid_timestamp_string(start_timestamp):
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Invalid start timestamp format '{start_timestamp}'. Expected YYYY-MM-DD HH:MM:SS")
+
+        if end_timestamp:
+            if not self._is_valid_timestamp_string(end_timestamp):
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Invalid end timestamp format '{end_timestamp}'. Expected YYYY-MM-DD HH:MM:SS")
+
+        # Validate timestamp range logic
+        if start_timestamp and end_timestamp:
+            try:
+                start_dt = datetime.strptime(start_timestamp, '%Y-%m-%d %H:%M:%S')
+                end_dt = datetime.strptime(end_timestamp, '%Y-%m-%d %H:%M:%S')
+                if start_dt > end_dt:
+                    self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                       f"Start timestamp '{start_timestamp}' is after end timestamp '{end_timestamp}'")
+            except ValueError as e:
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Timestamp parsing error: {str(e)}")
+
+    def _is_valid_date_string(self, date_str: str) -> bool:
+        """Check if string is valid YYYY-MM-DD format"""
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+            return True
+        except ValueError:
+            return False
+
+    def _is_valid_time_string(self, time_str: str) -> bool:
+        """Check if string is valid HH:MM:SS format"""
+        try:
+            datetime.strptime(time_str, '%H:%M:%S')
+            return True
+        except ValueError:
+            return False
+
+    def _is_valid_timestamp_string(self, timestamp_str: str) -> bool:
+        """Check if string is valid YYYY-MM-DD HH:MM:SS format"""
+        try:
+            datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+            return True
+        except ValueError:
+            return False
 
     def _handle_range_rule_for_pk(self, column: Dict[str, Any], table_name: str, col_name: str,
                                   table_index: int, col_index: int, rule: Dict[str, Any], length_constraint):
@@ -808,8 +1073,6 @@ class SchemaValidator:
         if length_constraint is not None:
             self._correct_choice_length_constraint(column, table_name, col_name, table_index, col_index,
                                                    choice_info, length_constraint)
-        # else:
-        #     self._suggest_choice_length_constraint(table_name, col_name, choice_info)
 
     def _analyze_choice_dimensions(self, rule: Dict[str, Any], choices: List) -> Dict[str, int]:
         """Analyze choice value dimensions - optimized with list comprehension"""
@@ -871,17 +1134,6 @@ class SchemaValidator:
                 new_constraint['max'] = constraint_max
 
         return new_constraint
-
-    def _suggest_choice_length_constraint(self, table_name: str, col_name: str, choice_info: Dict):
-        """Suggest appropriate length constraint for choices"""
-        min_len, max_len = choice_info['min_length'], choice_info['max_length']
-
-        if min_len == max_len:
-            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
-                                    f"Consider fixed length: {min_len}")
-        else:
-            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
-                                    f"Consider length range: {{\"min\": {min_len}, \"max\": {max_len}}}")
 
     def _handle_primary_key_with_rule(self, column: Dict[str, Any], table_name: str, col_name: str,
                                       table_index: int, col_index: int, rule: Dict[str, Any], length_constraint):
@@ -1044,6 +1296,24 @@ class SchemaValidator:
                     'compatible_types': ['date', 'str', 'string'],
                     'string_acceptable': False,
                     'auto_convert': False
+                },
+                'date_range': {
+                    'compatible_types': ['date', 'str', 'string'],
+                    'string_acceptable': True,
+                    'preferred_type_for_string': 'str',
+                    'auto_convert': True
+                },
+                'time_range': {
+                    'compatible_types': ['time', 'str', 'string'],
+                    'string_acceptable': True,
+                    'preferred_type_for_string': 'str',
+                    'auto_convert': True
+                },
+                'timestamp_range': {
+                    'compatible_types': ['timestamp', 'datetime', 'str', 'string'],
+                    'string_acceptable': True,
+                    'preferred_type_for_string': 'str',
+                    'auto_convert': True
                 }
             }
         return self._type_compatibility_cache
@@ -1053,8 +1323,6 @@ class SchemaValidator:
         """Handle string type conversion for numeric rules"""
         # Check for prefix/suffix that would justify string type
         if rule.get('prefix') or rule.get('suffix'):
-            # self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
-            #                         f"String type appropriate due to prefix/suffix formatting")
             return
 
         suggested_type = self._determine_conversion_type(rule, rule_type)
@@ -1191,6 +1459,9 @@ class SchemaValidator:
 
         if new_value is None and field == 'length':
             column.pop('length', None)
+        elif field == 'rule' and isinstance(new_value, dict):
+            # For rule corrections, merge or replace appropriately
+            column[field] = new_value
         else:
             column[field] = new_value
 
@@ -1238,86 +1509,33 @@ class SchemaValidator:
         """Get list of critical errors that prevent schema processing"""
         return self.critical_errors.copy()
 
-    def get_type_conversion_summary(self, corrected_schema: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Get summary of type conversions - optimized with generator"""
+    def get_format_validation_summary(self, corrected_schema: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Get summary of format validations for date/time rules"""
         schema = corrected_schema or self.corrected_schema
         if not schema:
             return []
 
-        conversions = []
+        format_issues = []
         for table in schema.get('tables', []):
             table_name = table.get('table_name', 'Unknown')
             for col in table.get('columns', []):
                 col_name = col.get('name', 'Unknown')
-                for correction in col.get('corrections', []):
-                    if (correction.get('field') == 'type' and
-                            correction.get('action') in {'auto_converted', 'corrected'}):
-                        conversions.append({
+                rule = col.get('rule', {})
+
+                if isinstance(rule, dict):
+                    rule_type = rule.get('type', '')
+                    format_field = rule.get('format')
+
+                    if rule_type in ['date_range', 'time_range', 'timestamp_range'] and format_field:
+                        format_issues.append({
                             'table': table_name,
                             'column': col_name,
-                            'original_type': correction['old_value'],
-                            'new_type': correction['new_value'],
-                            'reason': correction['reason'],
-                            'action': correction['action']
+                            'rule_type': rule_type,
+                            'format': format_field,
+                            'validated': True
                         })
-        return conversions
 
-    def get_original_type_from_corrections(self, column: Dict[str, Any]) -> str:
-        """Extract original type from corrections - optimized"""
-        for correction in column.get('corrections', []):
-            if (correction.get('field') == 'type' and
-                    correction.get('action') in {'auto_converted', 'corrected'}):
-                return correction.get('old_value', column.get('type', 'unknown'))
-        return column.get('type', 'unknown')
-
-    def was_type_converted(self, column: Dict[str, Any]) -> bool:
-        """Check if column type was converted - optimized with any()"""
-        return any(
-            correction.get('field') == 'type' and
-            correction.get('action') in {'auto_converted', 'corrected'}
-            for correction in column.get('corrections', [])
-        )
-
-    def get_length_conversion_summary(self, corrected_schema: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Get summary of length constraint conversions"""
-        schema = corrected_schema or self.corrected_schema
-        if not schema:
-            return []
-
-        conversions = []
-        for table in schema.get('tables', []):
-            table_name = table.get('table_name', 'Unknown')
-            for col in table.get('columns', []):
-                col_name = col.get('name', 'Unknown')
-                for correction in col.get('corrections', []):
-                    if (correction.get('field') == 'length' and
-                            correction.get('reason') == 'converted_int_to_digit_range'):
-                        conversions.append({
-                            'table': table_name,
-                            'column': col_name,
-                            'original_length': correction['old_value'],
-                            'new_length': correction['new_value'],
-                            'reason': correction['reason'],
-                            'action': correction['action']
-                        })
-        return conversions
-        """Get all corrections of a specific type"""
-        if not self.corrected_schema:
-            return []
-
-        corrections = []
-        for table in self.corrected_schema.get('tables', []):
-            table_name = table.get('table_name', 'Unknown')
-            for col in table.get('columns', []):
-                col_name = col.get('name', 'Unknown')
-                for correction in col.get('corrections', []):
-                    if correction.get('field') == correction_type:
-                        corrections.append({
-                            'table': table_name,
-                            'column': col_name,
-                            **correction
-                        })
-        return corrections
+        return format_issues
 
     def has_critical_issues(self) -> bool:
         """Check if there are critical issues that prevent processing"""
@@ -1337,6 +1555,7 @@ class SchemaValidator:
 
         pk_tables = 0
         fk_tables = 0
+        date_columns = 0
 
         for table in tables:
             # Check for primary keys
@@ -1348,11 +1567,20 @@ class SchemaValidator:
             if table.get('foreign_keys'):
                 fk_tables += 1
 
+            # Count date/time columns
+            for col in table.get('columns', []):
+                rule = col.get('rule', {})
+                if isinstance(rule, dict):
+                    rule_type = rule.get('type', '')
+                    if rule_type in ['date_range', 'time_range', 'timestamp_range']:
+                        date_columns += 1
+
         return {
             'total_tables': len(tables),
             'total_columns': total_columns,
             'tables_with_pk': pk_tables,
             'tables_with_fk': fk_tables,
+            'date_time_columns': date_columns,
             'avg_columns_per_table': total_columns / len(tables) if tables else 0
         }
 

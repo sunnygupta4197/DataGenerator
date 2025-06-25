@@ -70,7 +70,8 @@
                     "nullable": true,
                     "rule": {
                         "type": "date_range",
-                        "start": "1950-01-01"
+                        "start": "1950-01-01",
+                        "format": "YYYY-MM"
                     }
                 },
                 {
@@ -194,10 +195,13 @@
     "locale": "en_GB",
     "rows": 20000,
     "output": {
-        "format": "csv",
+        "format": "fixed",
         "directory": "./output/{timestamp}",
         "filename_template": "{table_name}",
-        "csv_delimiter": "|"
+        "csv_delimiter": "|",
+        "alignment": "left",
+        "numeric_alignment": "left",
+        "default_column_width": 30
       }
 }
 

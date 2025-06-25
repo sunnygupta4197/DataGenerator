@@ -506,6 +506,11 @@ class OutputConfig:
     json_indent: int = 2
     parquet_engine: str = "pyarrow"
 
+    default_column_width: int = 15
+    padding_char: str = ' '
+    alignment: str = 'left'
+    numeric_alignment: str = 'right'
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def __post_init__(self):
@@ -514,7 +519,7 @@ class OutputConfig:
     
     def _setup_output_directory(self):
         """Setup output directory"""
-        valid_formats = ["csv", "json", "jsonl", "parquet", "sql_query", "xlsx", "dsv"]
+        valid_formats = ["csv", "json", "jsonl", "parquet", "sql_query", "xlsx", "dsv", "fixed", "fwf"]
         if self.format not in valid_formats:
             print(f"Warning: Invalid format '{self.format}', defaulting to 'csv'")
             self.format = "csv"
@@ -1385,7 +1390,7 @@ class ConfigurationManager:
         if not config.output.directory:
             errors.append("Output directory must be specified")
 
-        if config.output.format not in ['csv', 'json', 'parquet', 'sql_query']:
+        if config.output.format not in ["csv", "json", "jsonl", "parquet", "sql_query", "xlsx", "dsv", "fixed", "fwf"]:
             errors.append(f"Unsupported output format: {config.output.format}")
 
         # Database validation

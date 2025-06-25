@@ -240,7 +240,8 @@ class ParallelDataGenerator:
                 output_path,
                 format_type=output_format,
                 enable_progress=True,
-                logger=self.logger
+                logger=self.logger,
+                **self.data_generator.config.output
             )
         except ValueError as e:
             self.logger.error(f"Failed to create writer: {e}")

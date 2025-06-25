@@ -10,6 +10,7 @@ Key Features:
 - JSON/JSONL writer for structured data
 - Parquet writer for columnar data (requires pyarrow)
 - Excel writer for business reporting (requires openpyxl)
+- Fixed Width writer for legacy systems and mainframe compatibility
 - Configurable buffering and compression options
 - Progress tracking and error handling
 """
@@ -20,6 +21,13 @@ import logging
 from typing import Dict, List, Any, Optional
 from abc import ABC, abstractmethod
 import time
+
+# Optional pandas import for enhanced type detection
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
 
 
 class StreamingWriter(ABC):
@@ -688,6 +696,238 @@ class StreamingExcelWriter(StreamingWriter):
                 raise
 
 
+class StreamingFixedWidthWriter(StreamingWriter):
+    """
+    Streaming Fixed Width writer for legacy systems and mainframe compatibility
+
+    Features:
+    - Configurable column widths with defaults
+    - Multiple alignment options (left, right, center)
+    - Memory-efficient buffered writing
+    - Proper padding and truncation handling
+    - Support for numeric alignment preferences
+    - Header row support
+    - Optional pandas integration for intelligent type detection
+    """
+
+    def __init__(self, file_path: str, buffer_size: int = 8192,
+                 column_widths: Dict[str, int] = None,
+                 default_column_width: int = 20,
+                 padding_char: str = ' ',
+                 alignment: str = 'left',
+                 numeric_alignment: str = 'right',
+                 include_header: bool = True,
+                 encoding: str = 'utf-8',
+                 enable_progress: bool = False,
+                 logger: Optional[logging.Logger] = None):
+        """
+        Initialize Fixed Width writer
+
+        Args:
+            file_path: Output fixed-width file path
+            buffer_size: Buffer size for I/O operations
+            column_widths: Dictionary mapping column names to their widths
+            default_column_width: Default width for columns not specified in column_widths
+            padding_char: Character used for padding (usually space)
+            alignment: Default alignment for text columns ('left', 'right', 'center')
+            numeric_alignment: Alignment for numeric columns ('left', 'right', 'center')
+            include_header: Whether to include header row
+            encoding: File encoding
+            enable_progress: Enable progress tracking
+            logger: Logger instance
+        """
+        super().__init__(file_path, buffer_size, enable_progress, logger)
+
+        self.column_widths = column_widths or {}
+        self.default_column_width = default_column_width
+        self.padding_char = padding_char
+        self.alignment = alignment
+        self.numeric_alignment = numeric_alignment
+        self.include_header = include_header
+        self.encoding = encoding
+
+        self.file_handle = None
+        self.columns = None
+        self.column_types = {}  # Cache for column type detection
+
+        self._open_file()
+
+    def _open_file(self):
+        """Open fixed-width file for writing"""
+        try:
+            self.file_handle = open(
+                self.file_path, 'w',
+                buffering=self.buffer_size,
+                encoding=self.encoding
+            )
+            self.logger.debug(f"Opened fixed-width file for writing: {self.file_path}")
+        except Exception as e:
+            self.logger.error(f"Failed to open fixed-width file {self.file_path}: {e}")
+            raise
+
+    def write_header(self, columns: List[str]) -> None:
+        """Write fixed-width header row"""
+        if self.header_written:
+            self.logger.warning("Header already written, skipping")
+            return
+
+        if not self.file_handle:
+            raise RuntimeError("File not open for writing")
+
+        self.columns = columns
+
+        if self.include_header:
+            header_line = self._format_header()
+            self.file_handle.write(header_line)
+            self.bytes_written += len(header_line.encode(self.encoding))
+
+        self.header_written = True
+        self.logger.debug(f"Fixed-width header written with {len(columns)} columns")
+
+    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
+        """Write batch of data to fixed-width format"""
+        if not self.file_handle or not self.columns:
+            raise RuntimeError("File not open or header not written")
+
+        if not batch:
+            return
+
+        # Detect column types from first batch for better formatting
+        if not self.column_types and batch:
+            self._detect_column_types(batch)
+
+        batch_lines = []
+
+        for row in batch:
+            formatted_row = self._format_row(row)
+            batch_lines.append(formatted_row)
+
+        # Write all lines at once for better performance
+        batch_content = ''.join(batch_lines)
+        self.file_handle.write(batch_content)
+        self.bytes_written += len(batch_content.encode(self.encoding))
+
+        self._log_progress(len(batch))
+
+    def _detect_column_types(self, batch: List[Dict[str, Any]]) -> None:
+        """Detect column types from sample data for better formatting"""
+        try:
+            if HAS_PANDAS:
+                # Create a small sample for type detection
+                sample_size = min(100, len(batch))
+                sample_data = batch[:sample_size]
+
+                # Convert to DataFrame for type inference
+                df = pd.DataFrame(sample_data)
+
+                for column in self.columns:
+                    if column in df.columns:
+                        if pd.api.types.is_numeric_dtype(df[column]):
+                            self.column_types[column] = 'numeric'
+                        elif pd.api.types.is_datetime64_any_dtype(df[column]):
+                            self.column_types[column] = 'datetime'
+                        else:
+                            self.column_types[column] = 'text'
+                    else:
+                        self.column_types[column] = 'text'
+            else:
+                # Fallback without pandas - simple type detection
+                self.logger.debug("Pandas not available, using simple type detection")
+                for column in self.columns:
+                    self.column_types[column] = 'text'
+
+                    # Sample a few values to detect numeric columns
+                    for row in batch[:10]:  # Check first 10 rows
+                        value = row.get(column)
+                        if value is not None:
+                            try:
+                                float(value)
+                                self.column_types[column] = 'numeric'
+                                break
+                            except (ValueError, TypeError):
+                                continue
+
+        except Exception as e:
+            self.logger.warning(f"Type detection failed: {e}")
+            # Default all to text
+            for column in self.columns:
+                self.column_types[column] = 'text'
+
+    def _get_column_width(self, column_name: str) -> int:
+        """Get the width for a specific column"""
+        return self.column_widths.get(column_name, self.default_column_width)
+
+    def _get_column_alignment(self, column_name: str) -> str:
+        """Get alignment for a specific column based on its type"""
+        column_type = self.column_types.get(column_name, 'text')
+
+        if column_type == 'numeric':
+            return self.numeric_alignment
+        else:
+            return self.alignment
+
+    def _format_value(self, value: Any, width: int, alignment: str = 'left') -> str:
+        """Format a single value to fixed width with specified alignment"""
+        if value is None:
+            str_value = ''
+        else:
+            str_value = str(value)
+
+        # Truncate if too long
+        if len(str_value) > width:
+            str_value = str_value[:width]
+
+        # Apply alignment and padding
+        if alignment == 'left':
+            return str_value.ljust(width, self.padding_char)
+        elif alignment == 'right':
+            return str_value.rjust(width, self.padding_char)
+        elif alignment == 'center':
+            return str_value.center(width, self.padding_char)
+        else:
+            return str_value.ljust(width, self.padding_char)
+
+    def _format_header(self) -> str:
+        """Format the header row"""
+        header_parts = []
+        for col in self.columns:
+            width = self._get_column_width(col)
+            alignment = self._get_column_alignment(col)
+            formatted_col = self._format_value(col, width, alignment)
+            header_parts.append(formatted_col)
+        return ''.join(header_parts) + '\n'
+
+    def _format_row(self, row: Dict[str, Any]) -> str:
+        """Format a single data row"""
+        row_parts = []
+        for col in self.columns:
+            value = row.get(col, '')
+            width = self._get_column_width(col)
+            alignment = self._get_column_alignment(col)
+
+            formatted_value = self._format_value(value, width, alignment)
+            row_parts.append(formatted_value)
+
+        return ''.join(row_parts) + '\n'
+
+    def write_footer(self) -> None:
+        """Fixed-width files don't require a footer"""
+        pass
+
+    def close(self) -> None:
+        """Close fixed-width file"""
+        if self.file_handle and not self.is_closed:
+            self.file_handle.close()
+            self.file_handle = None
+            self.is_closed = True
+
+            stats = self.get_progress_stats()
+            self.logger.info(
+                f"Fixed-width file completed: {self.file_path} "
+                f"({stats['records_written']} records, {stats['bytes_written']} bytes)"
+            )
+
+
 # ===================== WRITER FACTORY =====================
 
 class WriterFactory:
@@ -730,16 +970,19 @@ class WriterFactory:
         elif writer_format in ['xlsx', 'excel']:
             return StreamingExcelWriter(file_path, **kwargs)
 
+        elif writer_format in ['dat', 'txt', 'fixed', 'fixedwidth']:
+            return StreamingFixedWidthWriter(file_path, **kwargs)
+
         else:
             raise ValueError(
                 f"Unsupported format: {writer_format}. "
-                f"Supported formats: csv, tsv, json, jsonl, parquet, xlsx"
+                f"Supported formats: csv, tsv, json, jsonl, parquet, xlsx, dat, txt, fixed"
             )
 
     @staticmethod
     def get_supported_formats() -> List[str]:
         """Get list of supported output formats"""
-        return ['csv', 'tsv', 'json', 'jsonl', 'parquet', 'xlsx']
+        return ['csv', 'tsv', 'json', 'jsonl', 'parquet', 'xlsx', 'dat', 'txt', 'fixed']
 
 
 # ===================== COMPRESSION UTILITIES =====================
@@ -859,6 +1102,39 @@ def example_usage():
     with compressed_writer:
         compressed_writer.write_header(columns)
         compressed_writer.write_batch(sample_data)
+
+    # Example 5: Fixed Width Writer
+    print("Writing Fixed-Width file...")
+    # Define custom column widths
+    custom_widths = {
+        'id': 8,
+        'name': 25,
+        'email': 35,
+        'age': 5
+    }
+
+    with StreamingFixedWidthWriter('output/example.dat',
+                                  column_widths=custom_widths,
+                                  alignment='left',
+                                  numeric_alignment='right',
+                                  enable_progress=True,
+                                  logger=logger) as writer:
+        writer.write_header(columns)
+
+        for i in range(0, len(sample_data), batch_size):
+            batch = sample_data[i:i + batch_size]
+            writer.write_batch(batch)
+
+    # Example 6: Using Writer Factory for Fixed Width
+    print("Using Writer Factory for Fixed Width...")
+    writer = WriterFactory.create_writer('output/example_factory.dat',
+                                        column_widths={'id': 6, 'name': 20, 'email': 30, 'age': 4},
+                                        enable_progress=True,
+                                        logger=logger)
+
+    with writer:
+        writer.write_header(columns)
+        writer.write_batch(sample_data)
 
     print("Examples completed successfully!")
 

@@ -1,21 +1,18 @@
-import random
-import json
-import io
 import sys
 import rstr
-import csv
 from faker import Faker
 from datetime import datetime, timedelta
 import logging
 from typing import Dict, List, Any, Optional
-from enum import Enum
+import random
 
+# Import your existing modules
 from validators.unified_validation_system import UnifiedValidator
 from .ai_providers import AIProviderManager
 
 
 class ValueGenerator:
-    """Enhanced ValueGenerator with configurable AI integration using modular providers"""
+    """Enhanced ValueGenerator with configurable AI integration and date formatting"""
 
     def __init__(self, faker: Faker, logger: logging.Logger, ai_config=None):
         self.faker = faker
@@ -62,28 +59,29 @@ class ValueGenerator:
         # Ultimate fallback
         return self._ultimate_fallback(data_type)
 
-    def _generate_with_ai_rule(self, rule: Dict[str, Any], data_type: str, column_name: str) -> Any:
-        """Generate value using AI with specific rule configuration"""
+    def _handle_ai_generation(self, rule: Any, data_type: str, column_name: str, is_fallback: bool = False) -> Any:
+        """Unified AI generation handling"""
         if not self.ai_manager:
-            self.logger.warning("AI generation requested but no AI manager available")
-            return self._ultimate_fallback(data_type)
+            if is_fallback:
+                return self._get_fallback_value(data_type, "ai_unavailable")
+            else:
+                self.logger.warning("AI generation requested but no AI manager available")
+                return self._get_fallback_value(data_type, "ai_unavailable")
 
         try:
             return self.ai_manager.generate_with_ai(rule, data_type, column_name)
         except Exception as e:
-            self.logger.warning(f"AI rule generation failed: {e}")
-            return self._ultimate_fallback(data_type)
+            error_context = "AI fallback generation" if is_fallback else "AI rule generation"
+            self.logger.warning(f"{error_context} failed: {e}")
+            return self._get_fallback_value(data_type, "ai_error")
+
+    def _generate_with_ai_rule(self, rule: Dict[str, Any], data_type: str, column_name: str) -> Any:
+        """Generate value using AI with specific rule configuration"""
+        return self._handle_ai_generation(rule, data_type, column_name, is_fallback=False)
 
     def _generate_with_ai_fallback(self, rule: Any, data_type: str, column_name: str = "generated_column") -> Any:
         """Generate value using AI as fallback"""
-        if not self.ai_manager:
-            return self._ultimate_fallback(data_type)
-
-        try:
-            return self.ai_manager.generate_with_ai(rule, data_type, column_name)
-        except Exception as e:
-            self.logger.warning(f"AI fallback generation failed: {e}")
-            return self._ultimate_fallback(data_type)
+        return self._handle_ai_generation(rule, data_type, column_name, is_fallback=True)
 
     def _should_use_ai_fallback(self) -> bool:
         """Check if AI fallback should be used"""
@@ -256,34 +254,136 @@ class ValueGenerator:
         return random.choice(choices)
 
     def _generate_date_range(self, rule: dict) -> Any:
-        """Generate date within range"""
+        """Generate date within range with optional formatting"""
         start_date = rule.get("start", "1950-01-01")
         end_date = rule.get("end", datetime.now().strftime("%Y-%m-%d"))
+        date_format = rule.get("format", None)  # Custom format
 
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d")
         delta = end - start
-        return (start + timedelta(days=random.randint(0, delta.days))).date()
+        generated_date = (start + timedelta(days=random.randint(0, delta.days))).date()
+
+        # Apply custom formatting if specified
+        if date_format:
+            return self._format_date(generated_date, date_format)
+
+        return generated_date
 
     def _generate_time_range(self, rule: dict) -> str:
-        """Generate time within range"""
+        """Generate time within range with optional formatting"""
         start_time = rule.get("start", "00:00:00")
         end_time = rule.get("end", "23:59:59")
+        time_format = rule.get("format", "%H:%M:%S")  # Default format
 
         start_dt = datetime.strptime(f"1970-01-01 {start_time}", "%Y-%m-%d %H:%M:%S")
         end_dt = datetime.strptime(f"1970-01-01 {end_time}", "%Y-%m-%d %H:%M:%S")
 
-        return self.faker.date_time_between_dates(start_dt, end_dt).strftime("%H:%M:%S")
+        generated_time = self.faker.date_time_between_dates(start_dt, end_dt)
+
+        # Apply custom formatting
+        return generated_time.strftime(time_format)
 
     def _generate_timestamp_range(self, rule: dict) -> str:
-        """Generate timestamp within range"""
+        """Generate timestamp within range with optional formatting"""
         start_ts = rule.get("start", "2000-01-01 00:00:00")
         end_ts = rule.get("end", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        timestamp_format = rule.get("format", "%Y-%m-%d %H:%M:%S")  # Default format
 
         start_dt = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S")
         end_dt = datetime.strptime(end_ts, "%Y-%m-%d %H:%M:%S")
 
-        return self.faker.date_time_between_dates(start_dt, end_dt).strftime("%Y-%m-%d %H:%M:%S")
+        generated_timestamp = self.faker.date_time_between_dates(start_dt, end_dt)
+
+        # Apply custom formatting
+        if timestamp_format:
+            return self._format_datetime(generated_timestamp, timestamp_format)
+
+        return generated_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _convert_human_format_to_strftime(self, format_string: str) -> str:
+        """Convert human-readable format patterns to Python strftime patterns"""
+        # Comprehensive format mappings - order matters for replacement
+        format_mappings = {
+            # Date patterns (longest first to avoid partial matches)
+            'MMMM': '%B',  # Full month name (January, February, etc.)
+            'MMM': '%b',  # Abbreviated month name (Jan, Feb, etc.)
+            'YYYY': '%Y',  # 4-digit year
+            'DD': '%d',  # Day with leading zero (01-31)
+            'MM': '%m',  # Month with leading zero (01-12)
+            'YY': '%y',  # 2-digit year
+
+            # Time patterns
+            'HH': '%H',  # Hour with leading zero (00-23)
+            'hh': '%I',  # Hour with leading zero (01-12)
+            'mm': '%M',  # Minute with leading zero (00-59)
+            'ss': '%S',  # Second with leading zero (00-59)
+            'A': '%p',  # AM/PM uppercase
+            'a': '%p',  # AM/PM (strftime always returns uppercase)
+
+            # Additional common patterns
+            'dddd': '%A',  # Full day name (Monday, Tuesday, etc.)
+            'ddd': '%a',  # Abbreviated day name (Mon, Tue, etc.)
+        }
+
+        # Replace human-readable patterns with strftime patterns
+        # Sort by length (descending) to avoid partial replacements
+        strftime_format = format_string
+        for human_pattern, strftime_pattern in sorted(format_mappings.items(), key=len, reverse=True):
+            strftime_format = strftime_format.replace(human_pattern, strftime_pattern)
+
+        return strftime_format
+
+    def _format_date(self, date_obj, format_string: str) -> str:
+        """Format date object according to human-readable format string"""
+        try:
+            strftime_format = self._convert_human_format_to_strftime(format_string)
+            return date_obj.strftime(strftime_format)
+        except ValueError as e:
+            self.logger.warning(f"Invalid date format '{format_string}': {e}. Using default format.")
+            return date_obj.strftime('%Y-%m-%d')  # Fallback to ISO format
+
+    def _format_datetime(self, datetime_obj, format_string: str) -> str:
+        """Format datetime object according to human-readable format string"""
+        try:
+            strftime_format = self._convert_human_format_to_strftime(format_string)
+            return datetime_obj.strftime(strftime_format)
+        except ValueError as e:
+            self.logger.warning(f"Invalid datetime format '{format_string}': {e}. Using default format.")
+            return datetime_obj.strftime('%Y-%m-%d %H:%M:%S')  # Fallback to ISO format
+
+    def _validate_and_suggest_format(self, format_string: str, context: str = "") -> str:
+        """Validate format string and suggest corrections if needed"""
+        # Common format mistakes and their corrections
+        format_corrections = {
+            'dd': 'DD', 'DD': 'DD',
+            'mm': 'MM', 'MM': 'MM',
+            'yyyy': 'YYYY', 'YYYY': 'YYYY',
+            'yy': 'YY', 'YY': 'YY',
+            'hh': 'HH', 'HH': 'HH',
+            'min': 'mm', 'minute': 'mm', 'minutes': 'mm',
+            'sec': 'ss', 'second': 'ss', 'seconds': 'ss',
+            'am': 'A', 'pm': 'A', 'AM': 'A', 'PM': 'A',
+            'month': 'MMMM', 'mon': 'MMM',
+            'day': 'DD', 'year': 'YYYY'
+        }
+
+        corrected_format = format_string
+        corrections_made = []
+
+        # Apply corrections
+        for mistake, correction in format_corrections.items():
+            if mistake in corrected_format and mistake != correction:
+                corrected_format = corrected_format.replace(mistake, correction)
+                corrections_made.append(f"'{mistake}' → '{correction}'")
+
+        # Log corrections if any were made
+        if corrections_made:
+            self.logger.info(f"Format auto-corrected{' for ' + context if context else ''}: "
+                             f"{', '.join(corrections_made)}. "
+                             f"Original: '{format_string}' → Corrected: '{corrected_format}'")
+
+        return corrected_format
 
     def _generate_numeric_range(self, rule: dict, data_type: str) -> Any:
         """Generate numeric value within range"""
@@ -334,33 +434,42 @@ class ValueGenerator:
             return ''.join([str(random.randint(0, 9)) for _ in range(length)])
         return self.faker.phone_number()
 
-    def _generate_default_by_type(self, data_type: str) -> Any:
-        """Generate default value based on data type"""
-        defaults = {
-            "int": lambda: random.randint(1, 100000),
-            "float": lambda: round(random.uniform(1.0, 100.0), 2),
-            "bool": lambda: random.choice([True, False]),
-            "date": lambda: self.faker.date_between(start_date="-5y", end_date="today"),
-            "str": lambda: self.faker.text(max_nb_chars=50),
-        }
-
-        return defaults.get(data_type, lambda: None)()
-
-    def _ultimate_fallback(self, data_type: str) -> Any:
-        """Ultimate fallback when all else fails"""
-        fallbacks = {
-            "int": lambda: random.randint(1, 1000),
-            "integer": lambda: random.randint(1, 1000),
+    def _get_fallback_value(self, data_type: str, context: str = "default") -> Any:
+        """Unified fallback value generation for all contexts"""
+        # Unified fallback mappings
+        fallback_mappings = {
+            "int": lambda: random.randint(1, 100000 if context == "default" else 1000),
+            "integer": lambda: random.randint(1, 100000 if context == "default" else 1000),
             "float": lambda: round(random.uniform(1.0, 100.0), 2),
             "double": lambda: round(random.uniform(1.0, 100.0), 2),
             "decimal": lambda: round(random.uniform(1.0, 100.0), 2),
             "bool": lambda: random.choice([True, False]),
             "boolean": lambda: random.choice([True, False]),
             "date": lambda: self.faker.date_between(start_date="-5y", end_date="today"),
-            "str": lambda: f"generated_value_{random.randint(1, 9999)}",
-            "string": lambda: f"generated_value_{random.randint(1, 9999)}",
-            "text": lambda: f"generated_value_{random.randint(1, 9999)}",
+            "str": lambda: (
+                self.faker.text(max_nb_chars=50) if context == "default"
+                else f"generated_value_{random.randint(1, 9999)}"
+            ),
+            "string": lambda: (
+                self.faker.text(max_nb_chars=50) if context == "default"
+                else f"generated_value_{random.randint(1, 9999)}"
+            ),
+            "text": lambda: (
+                self.faker.text(max_nb_chars=50) if context == "default"
+                else f"generated_value_{random.randint(1, 9999)}"
+            ),
         }
 
-        generator = fallbacks.get(data_type.lower(), lambda: f"default_value_{random.randint(1, 9999)}")
+        generator = fallback_mappings.get(
+            data_type.lower(),
+            lambda: f"{context}_value_{random.randint(1, 9999)}"
+        )
         return generator()
+
+    def _generate_default_by_type(self, data_type: str) -> Any:
+        """Generate default value based on data type"""
+        return self._get_fallback_value(data_type, "default")
+
+    def _ultimate_fallback(self, data_type: str) -> Any:
+        """Ultimate fallback when all else fails"""
+        return self._get_fallback_value(data_type, "fallback")
