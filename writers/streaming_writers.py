@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import pandas as pd
 import numpy as np
 from config_manager.config_manager import OutputConfig
+from .writer import FixedWidthFormatter
 
 # Optional imports
 try:
@@ -220,8 +221,10 @@ class StreamingWriter(ABC):
         # Initialize components
         self.optimizer = DataOptimizer(self.logger)
         self.progress = ProgressTracker(config.enable_progress, config.log_every_n_batches, self.logger)
+        self.formatter = FixedWidthFormatter(config)
 
         self.is_closed = False
+        self.columns = None
         self.header_written = False
 
     @abstractmethod
@@ -269,7 +272,6 @@ class CSVWriter(StreamingWriter):
             encoding=config.encoding,
             newline=''
         )
-        self.columns = None
 
     def write_header(self, columns: List[str]) -> None:
         if self.header_written:
@@ -279,7 +281,8 @@ class CSVWriter(StreamingWriter):
 
         if self.include_header:
             # Use pandas for consistent header formatting
-            pd.DataFrame(columns=columns).to_csv(
+            formatted_headers = self.formatter.format_header_row(self.columns)
+            pd.DataFrame(columns=formatted_headers).to_csv(
                 self.file_handle,
                 sep=self.delimiter,
                 quotechar=self.quote_char,
@@ -296,6 +299,9 @@ class CSVWriter(StreamingWriter):
         # Optimize with pandas
         df = pd.DataFrame(batch)
         df = self.optimizer.optimize_dataframe(df)
+
+        # Apply fixed-width formatting if enabled
+        df = self.formatter.format_dataframe(df)
 
         # Write using pandas
         df.to_csv(
@@ -348,6 +354,9 @@ class JSONLWriter(StreamingWriter):
         # Optimize with pandas
         df = pd.DataFrame(batch)
         df = self.optimizer.optimize_dataframe(df)
+
+        # Apply fixed-width formatting if enabled
+        df = self.formatter.format_dataframe(df)
 
         # Convert back to records and serialize
         records = df.to_dict('records')
@@ -427,6 +436,11 @@ class ParquetWriter(StreamingWriter):
 
     def write_header(self, columns: List[str]) -> None:
         self.columns = columns
+
+        # For Parquet, we can store fixed-width metadata
+        if self.formatter.enable_fixed_width:
+            self.formatter.analyze_data_for_widths(pd.DataFrame(columns=[col for col in columns]))
+
         self.header_written = True
 
     def write_batch(self, batch: List[Dict[str, Any]]) -> None:
@@ -565,6 +579,315 @@ class CompressionWriter(StreamingWriter):
         self.close()
 
 
+class FixedWidthWriter(StreamingWriter):
+    """Clean Fixed-Width writer implementation"""
+
+    def __init__(self, file_path: str, config: OutputConfig, **kwargs):
+        super().__init__(file_path, config)
+
+        # Force enable fixed-width formatting for this writer
+        self.formatter.enable_fixed_width = True
+
+        self.include_header = getattr(config, 'include_header', True)
+
+        self.file_handle = open(
+            file_path, 'w',
+            buffering=config.buffer_size,
+            encoding=config.encoding
+        )
+
+    def write_header(self, columns: List[str]) -> None:
+        if self.header_written:
+            return
+
+        self.columns = columns
+
+        if self.include_header:
+            formatted_headers = self.formatter.format_header(columns)
+            header_line = ''.join(formatted_headers) + '\n'
+            self.file_handle.write(header_line)
+
+        self.header_written = True
+
+    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
+        if not batch:
+            return
+
+        # Optimize with pandas
+        df = pd.DataFrame(batch)
+        df = self.optimizer.optimize_dataframe(df)
+
+        # Format each row to fixed width
+        lines = []
+        for _, row in df.iterrows():
+            line = ''.join(row.values) + '\n'
+            lines.append(line)
+
+        content = ''.join(lines)
+        self.file_handle.write(content)
+
+        # Estimate bytes written
+        estimated_bytes = len(content.encode(self.config.encoding))
+        self.progress.update(len(batch), estimated_bytes)
+
+    def close(self) -> None:
+        if not self.is_closed:
+            self.file_handle.close()
+            self.is_closed = True
+            stats = self.progress.get_stats()
+            self.logger.info(f"Fixed-width completed: {stats['records_written']:,} records")
+
+    def write_footer(self) -> None:
+        """Fixed-width files don't need a footer"""
+        pass
+
+
+class ExcelWriter(StreamingWriter):
+    """Enhanced Excel writer with fixed-width support and streaming capabilities"""
+
+    def __init__(self, file_path: str, config: OutputConfig, **kwargs):
+        super().__init__(file_path, config)
+
+        if not HAS_EXCEL:
+            raise ImportError("Excel libraries required. Install with: pip install openpyxl xlsxwriter")
+
+        # Excel-specific configuration
+        self.sheet_name = getattr(config, 'sheet_name', 'Sheet1')
+        self.include_header = getattr(config, 'include_header', True)
+        self.freeze_panes = getattr(config, 'freeze_panes', None)  # e.g., (1, 0)
+        self.auto_adjust_width = getattr(config, 'auto_adjust_width', True)
+        self.engine = getattr(config, 'excel_engine', 'openpyxl')
+        self.date_format = getattr(config, 'date_format', 'YYYY-MM-DD')
+        self.number_format = getattr(config, 'number_format', '#,##0.00')
+        self.max_rows_per_sheet = getattr(config, 'max_rows_per_sheet', 1048576)
+
+        # Header formatting options
+        self.header_format = getattr(config, 'header_format', {
+            'bold': True,
+            'bg_color': '#D7E4BC',
+            'font_color': '#000000'
+        })
+
+        # Determine file extension and engine
+        file_ext = os.path.splitext(file_path)[1].lower()
+        if file_ext == '.xlsx':
+            self.engine = 'xlsxwriter' if self.engine == 'xlsxwriter' else 'openpyxl'
+        elif file_ext == '.xls':
+            self.engine = 'xlwt'
+        else:
+            # Default to xlsx
+            if not file_path.endswith('.xlsx'):
+                self.file_path = file_path + '.xlsx'
+            self.engine = 'xlsxwriter' if self.engine == 'xlsxwriter' else 'openpyxl'
+
+        # Initialize Excel writer components
+        self.excel_writer = None
+        self.current_sheet = None
+        self.current_row = 0
+        self.sheet_count = 1
+        self.batch_buffer = []
+        self.columns = None
+
+    def write_header(self, columns: List[str]) -> None:
+        if self.header_written:
+            return
+
+        self.columns = columns
+
+        # Analyze columns for fixed-width formatting if enabled
+        if self.formatter.enable_fixed_width:
+            # Create a sample DataFrame for analysis
+            sample_df = pd.DataFrame(columns=columns)
+            self.formatter.analyze_data_for_widths(sample_df)
+
+        # Initialize Excel writer
+        self._initialize_excel_writer()
+
+        # Write header if enabled
+        if self.include_header:
+            self._write_excel_header(columns)
+
+        self.header_written = True
+
+    def _initialize_excel_writer(self):
+        """Initialize the Excel writer and first worksheet"""
+        try:
+            self.excel_writer = pd.ExcelWriter(
+                self.file_path,
+                engine=self.engine,
+                date_format=self.date_format,
+                options={'remove_timezone': True} if self.engine == 'xlsxwriter' else {}
+            )
+
+            # Create first worksheet
+            self._create_new_sheet()
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Excel writer: {e}")
+            raise
+
+    def _create_new_sheet(self):
+        """Create a new worksheet"""
+        if self.sheet_count == 1:
+            sheet_name = self.sheet_name
+        else:
+            sheet_name = f"{self.sheet_name}_Part{self.sheet_count}"
+
+        # Create empty DataFrame for sheet initialization
+        empty_df = pd.DataFrame()
+        empty_df.to_excel(self.excel_writer, sheet_name=sheet_name, index=False, header=False)
+
+        self.current_sheet = sheet_name
+        self.current_row = 0
+
+    def _write_excel_header(self, columns: List[str]):
+        """Write formatted header to Excel"""
+        if self.formatter.enable_fixed_width:
+            formatted_headers = self.formatter.format_header(columns)
+        else:
+            formatted_headers = columns
+
+        # Create header DataFrame
+        header_df = pd.DataFrame([dict(zip(columns, formatted_headers))])
+
+        # Write header to current sheet
+        header_df.to_excel(
+            self.excel_writer,
+            sheet_name=self.current_sheet,
+            startrow=self.current_row,
+            index=False,
+            header=False
+        )
+
+        self.current_row += 1
+
+        # Apply formatting if using xlsxwriter
+        if self.engine == 'xlsxwriter':
+            self._apply_header_formatting(formatted_headers)
+
+    def _apply_header_formatting(self, headers: List[str]):
+        """Apply formatting to header row using xlsxwriter"""
+        try:
+            workbook = self.excel_writer.book
+            worksheet = self.excel_writer.sheets[self.current_sheet]
+
+            # Create header format
+            header_format = workbook.add_format(self.header_format)
+
+            # Apply formatting to header cells
+            for col_num, header in enumerate(headers):
+                worksheet.write(0, col_num, header, header_format)
+
+            # Set column widths
+            for col_num, col_name in enumerate(self.columns):
+                if self.formatter.enable_fixed_width:
+                    width = self.formatter.get_column_width(col_name)
+                    worksheet.set_column(col_num, col_num, width)
+                elif self.auto_adjust_width:
+                    # Auto-adjust based on header length with some padding
+                    header_width = len(headers[col_num]) + 2
+                    worksheet.set_column(col_num, col_num, max(header_width, 10))
+
+            # Freeze panes if specified
+            if self.freeze_panes:
+                worksheet.freeze_panes(*self.freeze_panes)
+
+        except Exception as e:
+            self.logger.warning(f"Could not apply header formatting: {e}")
+
+    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
+        if not batch:
+            return
+
+        # Optimize with pandas
+        df = pd.DataFrame(batch)
+        df = self.optimizer.optimize_dataframe(df)
+
+        # Apply fixed-width formatting if enabled
+        if self.formatter.enable_fixed_width:
+            df = self.formatter.format_dataframe(df)
+
+        # Check if we need a new sheet (Excel row limit)
+        if self.current_row + len(df) > self.max_rows_per_sheet:
+            self._finalize_current_sheet()
+            self.sheet_count += 1
+            self._create_new_sheet()
+
+            # Write header to new sheet if enabled
+            if self.include_header:
+                self._write_excel_header(self.columns)
+
+        # Write data to current sheet
+        df.to_excel(
+            self.excel_writer,
+            sheet_name=self.current_sheet,
+            startrow=self.current_row,
+            index=False,
+            header=False
+        )
+
+        # Apply data formatting if using xlsxwriter
+        if self.engine == 'xlsxwriter':
+            self._apply_data_formatting(df, self.current_row)
+
+        self.current_row += len(df)
+
+        # Update progress
+        estimated_bytes = len(df) * len(df.columns) * 10
+        self.progress.update(len(batch), estimated_bytes)
+
+    def _apply_data_formatting(self, df: pd.DataFrame, start_row: int):
+        """Apply formatting to data rows using xlsxwriter"""
+        try:
+            workbook = self.excel_writer.book
+            worksheet = self.excel_writer.sheets[self.current_sheet]
+
+            # Create number format
+            number_format = workbook.add_format({'num_format': self.number_format})
+
+            # Apply number formatting to numeric columns
+            for col_num, col_name in enumerate(df.columns):
+                if pd.api.types.is_numeric_dtype(df[col_name]):
+                    # Apply number format to the range of cells
+                    end_row = start_row + len(df) - 1
+                    col_letter = chr(65 + col_num)
+                    cell_range = f'{col_letter}{start_row + 1}:{col_letter}{end_row + 1}'
+                    worksheet.set_column(col_num, col_num, None, number_format)
+
+        except Exception as e:
+            self.logger.warning(f"Could not apply data formatting: {e}")
+
+    def _finalize_current_sheet(self):
+        """Finalize current sheet before creating a new one"""
+        if self.engine == 'xlsxwriter' and self.excel_writer:
+            try:
+                # Any final sheet-specific formatting can go here
+                pass
+            except Exception as e:
+                self.logger.warning(f"Error finalizing sheet: {e}")
+
+    def close(self) -> None:
+        if not self.is_closed:
+            try:
+                if self.excel_writer:
+                    self.excel_writer.close()
+
+                self.is_closed = True
+                stats = self.progress.get_stats()
+
+                sheet_info = f" across {self.sheet_count} sheet(s)" if self.sheet_count > 1 else ""
+                self.logger.info(f"Excel completed: {stats['records_written']:,} records{sheet_info}")
+
+            except Exception as e:
+                self.logger.error(f"Error closing Excel writer: {e}")
+                raise
+
+    def write_footer(self) -> None:
+        """Finalize any remaining Excel formatting"""
+        if self.excel_writer and not self.is_closed:
+            self._finalize_current_sheet()
+
+
 # ===== FACTORY =====
 
 class WriterFactory:
@@ -583,7 +906,13 @@ class WriterFactory:
             'tsv': lambda path, cfg, **kw: CSVWriter(path, cfg, delimiter='\t', **kw),
             'jsonl': JSONLWriter,
             'json': JSONLWriter,
-            'parquet': ParquetWriter
+            'parquet': ParquetWriter,
+            'fixed': FixedWidthWriter,
+            'fwf': FixedWidthWriter,
+            'fixed_width': FixedWidthWriter,
+            'excel': ExcelWriter,
+            'xls': ExcelWriter,
+            'xlsx': ExcelWriter
         }
 
         writer_class = writers.get(config.format)

@@ -104,6 +104,10 @@ class OptimizedDataGenerationEngine:
                     table_metadata, total_records, foreign_key_data, output_dir
                 )
 
+                # ✅ Apply security consistently for ALL modes
+                if self.config.security.enable_data_masking:
+                    generated_data = self._apply_comprehensive_security_measures(generated_data, table_metadata)
+
             # Calculate generation statistics
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -354,6 +358,10 @@ class OptimizedDataGenerationEngine:
 
         # Apply masking
         masked_data = self.security_manager.mask_sensitive_data(data, sensitivity_map)
+        if sensitive_columns:
+            masking_operations = len(data) * len(sensitive_columns)
+            self.generation_stats['security_operations'] += masking_operations
+            self.logger.info(f"🔒 Applied {masking_operations:,} masking operations")
 
         # Apply encryption if enabled and encryption key is set
         if self.security_manager.encryption_key and sensitive_columns:

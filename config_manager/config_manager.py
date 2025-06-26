@@ -515,6 +515,14 @@ class OutputConfig:
     padding_char: str = ' '
     alignment: str = 'left'
     numeric_alignment: str = 'right'
+    column_widths: Optional[Dict[str, int]] = field(default_factory=dict)
+    truncate_char: Optional[str] = '…'
+    enable_fixed_width: bool = False
+
+    # Auto-sizing options
+    auto_size_columns: bool = False
+    max_auto_width: Optional[int] = 50
+    min_auto_width: Optional[int] = 8
 
     # Excel specific settings
     excel_worksheet_name: str = 'Sheet1'
@@ -524,6 +532,7 @@ class OutputConfig:
     buffer_size: int = 8192
     enable_progress: bool = True
     log_every_n_batches: int = 100
+
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 

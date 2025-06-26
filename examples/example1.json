@@ -196,6 +196,7 @@
     "rows": 20000,
     "output": {
         "format": "csv",
+        "enable_fixed_width": true,
         "directory": "./output/{timestamp}",
         "filename_template": "{table_name}",
         "csv_delimiter": "|",
