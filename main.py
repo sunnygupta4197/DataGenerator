@@ -255,7 +255,6 @@ class OptimizedDataGenerationEngine:
             # Log completion with file information
             self._log_streaming_completion(table_name, total_so_far, output_path)
 
-            # Log masking statistics if enabled
             if enable_masking:
                 sensitive_columns = [k for k, v in sensitivity_map.items() if v in ['PII', 'SENSITIVE']]
                 masking_operations = batch_count * len(sensitive_columns)
