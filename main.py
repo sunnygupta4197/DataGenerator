@@ -8,14 +8,12 @@ from traceback import print_exc
 import sys
 
 import pandas as pd
-from anyio.streams import file
 
 from constraint_manager.optimized_constraint_manager import OptimizedConstraintManager
 from validators.unified_validation_system import UnifiedValidator
 from data_generator.streaming_data_generator import ParallelDataGenerator, DataQualityAnalyzer, SecurityManager, \
     PerformanceProfiler
 from config_manager.config_manager import ConfigurationManager, GenerationConfig
-from writers.writer import CSVWriter, ParquetWriter, JsonWriter, SQLQueryWriter, FixedWidthWriter
 from data_generator.data_generator import DataGenerator
 
 from writers.unified_writer import UnifiedWriterFactory, UnifiedWriter
@@ -247,15 +245,15 @@ class OptimizedDataGenerationEngine:
                 all_data.extend(batch[:min(len(batch), 10000 - len(all_data))])
 
             # Progress logging for large datasets
+            total_so_far = batch_count * len(batch)
             if batch_count % 20 == 0:
-                total_so_far = batch_count * len(batch)
                 progress_pct = (total_so_far / total_records) * 100
                 memory_usage = self.parallel_generator.memory_monitor.get_memory_usage()
                 self.logger.info(
                     f"📈 Streaming progress: {total_so_far:,}/{total_records:,} ({progress_pct:.1f}%) - Memory: {memory_usage:.1f}MB")
 
             # Log completion with file information
-            self._log_streaming_completion(table_name, total_records, output_path)
+            self._log_streaming_completion(table_name, total_so_far, output_path)
 
             # Log masking statistics if enabled
             if enable_masking:
@@ -737,38 +735,76 @@ class OptimizedDataGenerationOrchestrator:
             return
 
         table_name = table_metadata["table_name"]
-        output_format = self.config.output.format
+        try:
+            with UnifiedWriterFactory.create_writer(
+                    table_name=table_name,
+                    config=self.config.output,  # Uses format from config
+                    logger=self.logger
+            ) as writer:
+                # Write all data as a single batch
+                writer.write_batch(data)
 
-        # Convert to DataFrame
+            self.logger.info(f"💾 Exported {len(data):,} records to {self.config.output.format.upper()} format")
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to export {table_name}: {e}")
+
+    def _export_table_data_advanced(self, data: List[Dict], table_metadata: Dict):
+        """Advanced export with batching and progress tracking"""
+        if not data:
+            return
+
+        table_name = table_metadata["table_name"]
+        batch_size = 10000
+
+        try:
+            with UnifiedWriterFactory.create_writer(
+                    table_name=table_name,
+                    config=self.config.output,
+                    compression=getattr(self.config.output, 'compression', None),
+                    logger=self.logger
+            ) as writer:
+
+                # Write in batches for large datasets
+                for i in range(0, len(data), batch_size):
+                    batch = data[i:i + batch_size]
+                    writer.write_batch(batch)
+
+                    if i % (batch_size * 5) == 0:  # Log every 5 batches
+                        progress = (i + len(batch)) / len(data) * 100
+                        self.logger.info(f"📊 Export progress: {progress:.1f}%")
+
+            self.logger.info(f"💾 Exported {len(data):,} records successfully")
+
+        except Exception as e:
+            self.logger.error(f"❌ Export failed for {table_name}: {e}")
+            raise
+
+    def _export_with_legacy_compatibility(self, data: List[Dict], table_metadata: Dict):
+        """Migration helper - maintains legacy interface temporarily"""
+        if not data:
+            return
+
+        table_name = table_metadata["table_name"]
+
+        # Convert List[Dict] to DataFrame (legacy compatibility)
         df = pd.DataFrame(data)
 
-        # Get appropriate writer
-        writers = {
-            "csv": CSVWriter,
-            "json": JsonWriter,
-            "jsonl": JsonWriter,
-            "parquet": ParquetWriter,
-            "sql_query": SQLQueryWriter,
-            'fwf': FixedWidthWriter,
-            'fixed': FixedWidthWriter,
-        }
+        # Create unified writer with legacy-style batching
+        with UnifiedWriterFactory.create_writer(
+                table_name=table_name,
+                config=self.config.output,
+                logger=self.logger
+        ) as writer:
 
-        writer_class = writers.get(output_format)
-        if writer_class:
-            try:
-                writer = writer_class(
-                    data=df,
-                    table_metadata=table_metadata,
-                    output_config=self.config.output,
-                    batch_size=10000,
-                    logger=self.logger
-                )
-                writer.write_data()
-                self.logger.info(f"💾 Exported {len(data):,} records to {output_format.upper()} format")
-            except Exception as e:
-                self.logger.error(f"❌ Failed to export {table_name} to {output_format}: {e}")
-        else:
-            self.logger.error(f"❌ Unsupported output format: {output_format}")
+            # Batch the DataFrame like legacy writers did
+            batch_size = 10000
+            for start in range(0, len(df), batch_size):
+                batch_df = df.iloc[start:start + batch_size]
+                batch_records = batch_df.to_dict('records')
+                writer.write_batch(batch_records)
+
+        self.logger.info(f"💾 Legacy-compatible export completed: {len(data):,} records")
 
     def _generate_enhanced_final_report(self, total_duration: float):
         """Generate comprehensive enhanced final report"""

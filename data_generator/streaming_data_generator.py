@@ -11,12 +11,7 @@ from contextlib import contextmanager
 import psutil
 import json
 
-# Import streaming writers from separate module
-from writers.streaming_writers import (
-    StreamingWriter,
-    WriterFactory
-)
-from config_manager.config_manager import OutputConfig
+from writers.unified_writer import UnifiedWriterFactory, UnifiedWriter
 
 
 @dataclass
@@ -246,22 +241,29 @@ class ParallelDataGenerator:
         """Set flag to indicate streaming was used (to avoid double writing)"""
         self.streaming_used = flag
 
-    def _create_streaming_writer(self, table_name) -> StreamingWriter:
+    def _create_streaming_writer(self, table_name) -> UnifiedWriter:
         """Create appropriate streaming writer using WriterFactory"""
         try:
-            return WriterFactory.create_writer(table_name, self.output_config, logger=self.logger)
+            return UnifiedWriterFactory.create_writer(
+                table_name=table_name,
+                config=self.output_config,
+                logger=self.logger
+            )
         except ValueError as e:
             self.logger.error(f"Failed to create writer: {e}")
             self.logger.warning("Falling back to CSV format")
 
-            # Temporarily change config format for fallback
+            # Fallback to CSV
             original_format = self.output_config.format
             self.output_config.format = "csv"
 
             try:
-                return WriterFactory.create_writer(table_name, self.output_config, logger=self.logger)
+                return UnifiedWriterFactory.create_writer(
+                    table_name=table_name,
+                    config=self.output_config,
+                    logger=self.logger
+                )
             finally:
-                # Restore original format
                 self.output_config.format = original_format
 
     # ===================== PARALLEL GENERATION =====================
