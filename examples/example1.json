@@ -195,7 +195,7 @@
     "locale": "en_GB",
     "rows": 20000,
     "output": {
-        "format": "fixed",
+        "format": "csv",
         "directory": "./output/{timestamp}",
         "filename_template": "{table_name}",
         "csv_delimiter": "|",

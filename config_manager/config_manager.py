@@ -503,13 +503,27 @@ class OutputConfig:
     # Format-specific settings
     csv_delimiter: str = ","
     csv_quotechar: str = '"'
-    json_indent: int = 2
+    csv_line_terminator: str = '\n'
+    json_indent: Optional[int] = 2
+    json_ensure_ascii: bool = False
     parquet_engine: str = "pyarrow"
+    parquet_compression: str = "snappy"
+    parquet_row_group_size: int = 10000
 
+    # Fixed-width specific settings
     default_column_width: int = 15
     padding_char: str = ' '
     alignment: str = 'left'
     numeric_alignment: str = 'right'
+
+    # Excel specific settings
+    excel_worksheet_name: str = 'Sheet1'
+    excel_max_rows_per_sheet: int = 1000000
+
+    # General settings
+    buffer_size: int = 8192
+    enable_progress: bool = True
+    log_every_n_batches: int = 100
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 

@@ -50,6 +50,7 @@ class OptimizedDataGenerationEngine:
             logger=logger
         )
 
+        self.streaming_used = False
         # Initialize additional enhanced components
         self.data_quality_analyzer = DataQualityAnalyzer(logger=logger)
         self.security_manager = SecurityManager(logger=logger)
@@ -93,6 +94,7 @@ class OptimizedDataGenerationEngine:
         table_name = table_metadata["table_name"]
         self.logger.info(f"🚀 Starting enhanced generation for table '{table_name}' ({total_records:,} records)")
 
+        self.streaming_used = False
         start_time = datetime.now()
 
         try:
@@ -136,6 +138,8 @@ class OptimizedDataGenerationEngine:
                        'enable_anomaly_detection') and self.config.validation.enable_anomaly_detection:
                 with self.performance_profiler.profile(f'table_{table_name}_anomaly_detection'):
                     self._detect_and_log_anomalies(generated_data, table_metadata)
+            else:
+                self.logger.info(f"💾 Data already written during streaming - skipping duplicate export")
 
             # Update statistics
             self.generation_stats['tables_processed'] += 1
@@ -151,6 +155,7 @@ class OptimizedDataGenerationEngine:
             # Extract foreign key data for subsequent tables
             generated_fk_data = self._extract_foreign_key_data(generated_data, table_metadata)
 
+            strategy_name = "streaming" if self.streaming_used else "parallel/adaptive"
             self.logger.info(f"✅ Completed {table_name}: {len(generated_data):,} records in {duration:.2f}s")
 
             # Log performance summary
@@ -168,7 +173,7 @@ class OptimizedDataGenerationEngine:
     def _select_and_execute_generation_strategy(self, table_metadata: Dict[str, Any],
                                                 total_records: int,
                                                 foreign_key_data: Dict[str, List],
-                                                output_dir: str) -> List[Dict]:
+                                                output_dir: str) -> list[dict]:
         """Select and execute the optimal generation strategy"""
 
         # Analyze dataset characteristics
@@ -177,38 +182,48 @@ class OptimizedDataGenerationEngine:
 
         # Strategy selection logic
         if self.config.performance.enable_streaming and total_records > 100000:
-            return self._generate_with_enhanced_streaming(
-                table_metadata, total_records, foreign_key_data, output_dir
-            )
+            self.streaming_used = True
+            return self._generate_with_enhanced_streaming(table_metadata, total_records, foreign_key_data)
         elif self.config.performance.enable_parallel and total_records > 10000:
-            return self._generate_with_enhanced_parallel(
-                table_metadata, total_records, foreign_key_data
-            )
+            return self._generate_with_enhanced_parallel(table_metadata, total_records, foreign_key_data)
         else:
-            return self._generate_with_adaptive_strategy(
-                table_metadata, total_records, foreign_key_data, output_dir
-            )
+            return self._generate_with_adaptive_strategy(table_metadata, total_records, foreign_key_data)
 
     def _generate_with_enhanced_streaming(self, table_metadata: Dict[str, Any],
                                           total_records: int,
-                                          foreign_key_data: Dict[str, List],
-                                          output_dir: str) -> List[Dict]:
+                                          foreign_key_data: Dict[str, List]) -> List[Dict]:
         """Generate data using enhanced streaming approach"""
         self.logger.info(f"📊 Using ENHANCED STREAMING generation strategy")
 
         table_name = table_metadata["table_name"]
-        output_format = self.config.output.format
-        output_path = os.path.join(output_dir, f"{table_name}.{output_format}")
+        output_path = self.config.output.get_output_path(table_name)
 
         all_data = []
         batch_count = 0
         quality_scores = []
 
+        # Prepare masking configuration
+        enable_masking = self.config.security.enable_data_masking
+        sensitivity_map = None
+
+        if enable_masking:
+            # Build sensitivity map from column metadata
+            sensitivity_map = {}
+            for column in table_metadata.get('columns', []):
+                sensitivity_level = column.get('sensitivity', 'PUBLIC')
+                sensitivity_map[column['name']] = sensitivity_level
+
+            self.logger.info(
+                f"🔒 Masking enabled for streaming. Sensitive columns: {len([k for k, v in sensitivity_map.items() if v in ['PII', 'SENSITIVE']])}")
+
         # Use enhanced streaming generator
         for batch in self.parallel_generator.generate_streaming(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data
+                foreign_key_data=foreign_key_data,
+                enable_masking=enable_masking,
+                security_manager=self.security_manager,
+                sensitivity_map=sensitivity_map
         ):
             batch_count += 1
 
@@ -237,8 +252,33 @@ class OptimizedDataGenerationEngine:
                 self.logger.info(
                     f"📈 Streaming progress: {total_so_far:,}/{total_records:,} ({progress_pct:.1f}%) - Memory: {memory_usage:.1f}MB")
 
+            # Log completion with file information
+            self._log_streaming_completion(table_name, total_records, output_path)
+
+            # Log masking statistics if enabled
+            if enable_masking:
+                sensitive_columns = [k for k, v in sensitivity_map.items() if v in ['PII', 'SENSITIVE']]
+                masking_operations = batch_count * len(sensitive_columns)
+                self.generation_stats['security_operations'] += masking_operations
+                self.logger.info(f"🔒 Applied {masking_operations:,} masking operations during streaming")
+
         self.logger.info(f"💾 Enhanced streaming completed. Data saved to: {output_path}")
         return all_data
+
+    def _log_streaming_completion(self, table_name: str, total_records: int, output_path: str):
+        """Log completion of streaming data generation with file info"""
+        import os
+
+        try:
+            if os.path.exists(output_path):
+                file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                self.logger.info(f"📁 Streaming file: {output_path}")
+                self.logger.info(f"📏 File size: {file_size_mb:.2f} MB")
+                self.logger.info(f"📊 Records written: {total_records:,}")
+            else:
+                self.logger.warning(f"⚠️ Expected output file not found: {output_path}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not get file info for {output_path}: {e}")
 
     def _generate_with_enhanced_parallel(self, table_metadata: Dict[str, Any],
                                          total_records: int,
@@ -265,22 +305,31 @@ class OptimizedDataGenerationEngine:
 
     def _generate_with_adaptive_strategy(self, table_metadata: Dict[str, Any],
                                          total_records: int,
-                                         foreign_key_data: Dict[str, List],
-                                         output_dir: str) -> List[Dict]:
+                                         foreign_key_data: Dict[str, List]) -> List[Dict]:
         """Generate data using adaptive strategy selection"""
         self.logger.info(f"🤖 Using ADAPTIVE generation strategy")
 
-        output_format = self.config.output.format
-        table_name = table_metadata["table_name"]
-        output_path = os.path.join(output_dir, f"{table_name}.{output_format}")
-
         all_data = []
+
+        # Prepare masking configuration
+        enable_masking = self.config.security.enable_data_masking
+        sensitivity_map = None
+
+        if enable_masking:
+            # Build sensitivity map from column metadata
+            sensitivity_map = {}
+            for column in table_metadata.get('columns', []):
+                sensitivity_level = column.get('sensitivity', 'PUBLIC')
+                sensitivity_map[column['name']] = sensitivity_level
 
         # Enhanced adaptive generator with comprehensive monitoring
         for batch in self.parallel_generator.generate_adaptive(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data
+                foreign_key_data=foreign_key_data,
+                enable_masking=enable_masking,
+                security_manager=self.security_manager,
+                sensitivity_map=sensitivity_map
         ):
             if isinstance(batch, list) and len(batch) > 0:
                 all_data.extend(batch)
@@ -581,8 +630,11 @@ class OptimizedDataGenerationOrchestrator:
                     if len(all_foreign_key_data[key]) > 100000:
                         all_foreign_key_data[key] = all_foreign_key_data[key][-50000:]
 
-                # Export data to file using appropriate writer
-                self._export_table_data(generated_records, table_metadata)
+                if not self.generation_engine.streaming_used:
+                    self._export_table_data(generated_records, table_metadata)
+                    self.logger.info(f"💾 Data exported to file using normal writer")
+                else:
+                    self.logger.info(f"💾 Data already written during streaming - skipping normal export")
 
                 # Memory status logging
                 current_memory = self.generation_engine.parallel_generator.memory_monitor.get_memory_usage()

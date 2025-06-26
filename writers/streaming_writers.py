@@ -1,1148 +1,600 @@
 """
-Streaming Writers Module
+Refactored Streaming Writers with Clean Architecture
 
-This module provides various streaming writer implementations for efficiently
-writing large datasets to different file formats with minimal memory usage.
-
-Key Features:
-- Abstract base class for consistent writer interface
-- CSV writer with proper escaping and buffering
-- JSON/JSONL writer for structured data
-- Parquet writer for columnar data (requires pyarrow)
-- Excel writer for business reporting (requires openpyxl)
-- Fixed Width writer for legacy systems and mainframe compatibility
-- Configurable buffering and compression options
-- Progress tracking and error handling
+This version separates concerns into focused, single-responsibility components:
+- Data optimization (pandas handling)
+- File I/O (format-specific writers)
+- Configuration management
+- Progress tracking
 """
 
 import os
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union, Protocol
 from abc import ABC, abstractmethod
 import time
-import inspect
+from datetime import datetime
+from dataclasses import dataclass
+import pandas as pd
+import numpy as np
+from config_manager.config_manager import OutputConfig
 
-# Optional pandas import for enhanced type detection
+# Optional imports
 try:
-    import pandas as pd
-    HAS_PANDAS = True
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    HAS_PYARROW = True
 except ImportError:
-    HAS_PANDAS = False
+    HAS_PYARROW = False
+
+# ===== DATA OPTIMIZATION =====
 
 
-class StreamingWriter(ABC):
-    """
-    Abstract base class for streaming writers
+class DataOptimizer:
+    """Handles pandas data type optimization and cleaning"""
 
-    Provides a consistent interface for writing data in batches while
-    maintaining low memory usage and supporting various output formats.
-    """
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+        self.schema_cache = {}
+        self.datetime_formats = {}
 
-    def __init__(self, file_path: str, buffer_size: int = 8192,
-                 enable_progress: bool = False, logger: Optional[logging.Logger] = None):
-        """
-        Initialize streaming writer
+    def optimize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply all optimizations to a DataFrame"""
+        if df.empty:
+            return df
 
-        Args:
-            file_path: Output file path
-            buffer_size: Buffer size for I/O operations
-            enable_progress: Enable progress tracking
-            logger: Logger instance
-        """
-        self.file_path = file_path
-        self.buffer_size = buffer_size
-        self.enable_progress = enable_progress
+        # Cache schema from first batch
+        if not self.schema_cache:
+            self._infer_schema(df)
+
+        # Apply optimizations
+        df = self._optimize_dtypes(df)
+        df = self._clean_data(df)
+        return df
+
+    def _infer_schema(self, df: pd.DataFrame):
+        """Infer optimal data types for each column"""
+        for col in df.columns:
+            series = df[col].dropna()
+            if len(series) == 0:
+                continue
+
+            # Numeric optimization
+            if pd.api.types.is_numeric_dtype(series):
+                self.schema_cache[col] = self._get_optimal_numeric_type(series)
+
+            # Datetime detection
+            elif self._is_datetime_column(series):
+                self.schema_cache[col] = 'datetime64[ns]'
+
+            # Categorical optimization
+            elif self._should_be_categorical(series):
+                self.schema_cache[col] = 'category'
+
+            else:
+                self.schema_cache[col] = 'object'
+
+        self.logger.debug(f"Schema inferred: {self.schema_cache}")
+
+    def _get_optimal_numeric_type(self, series: pd.Series) -> str:
+        """Find the smallest numeric type that fits the data"""
+        if series.dtype.kind in 'iu':  # integers
+            min_val, max_val = series.min(), series.max()
+            if min_val >= 0:  # unsigned
+                for dtype in ['uint8', 'uint16', 'uint32', 'uint64']:
+                    if max_val <= np.iinfo(getattr(np, dtype)).max:
+                        return dtype
+            else:  # signed
+                for dtype in ['int8', 'int16', 'int32', 'int64']:
+                    info = np.iinfo(getattr(np, dtype))
+                    if info.min <= min_val <= max_val <= info.max:
+                        return dtype
+        elif series.dtype.kind == 'f':  # floats
+            # Try float32 if precision allows
+            if (series.astype('float32') == series).all():
+                return 'float32'
+        return str(series.dtype)
+
+    def _is_datetime_column(self, series: pd.Series) -> bool:
+        """Check if series contains datetime data"""
+        if series.dtype != 'object':
+            return False
+
+        sample = series.head(min(10, len(series)))
+        successful_conversions = 0
+
+        for value in sample:
+            if pd.isna(value):
+                continue
+            try:
+                pd.to_datetime(str(value), errors='raise')
+                successful_conversions += 1
+            except:
+                pass
+
+        non_null_count = sample.notna().sum()
+        return (successful_conversions / non_null_count) > 0.8 if non_null_count > 0 else False
+
+    def _should_be_categorical(self, series: pd.Series) -> bool:
+        """Check if series should be categorical"""
+        unique_ratio = series.nunique() / len(series)
+        return unique_ratio < 0.5 and series.nunique() < 1000
+
+    def _optimize_dtypes(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply cached schema to DataFrame"""
+        for col, dtype in self.schema_cache.items():
+            if col in df.columns:
+                try:
+                    if dtype == 'category':
+                        df[col] = df[col].astype('category')
+                    elif dtype == 'datetime64[ns]':
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                    elif dtype.startswith(('int', 'uint', 'float')):
+                        df[col] = pd.to_numeric(df[col], errors='coerce').astype(dtype)
+                except Exception as e:
+                    self.logger.warning(f"Failed to optimize {col}: {e}")
+        return df
+
+    def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and validate data"""
+        # Remove completely empty rows
+        df = df.dropna(how='all')
+
+        # Fill NaN values appropriately
+        for col in df.columns:
+            if col in self.schema_cache:
+                dtype = self.schema_cache[col]
+                if dtype.startswith(('int', 'uint', 'float')):
+                    df[col] = df[col].fillna(0)
+                elif dtype == 'object':
+                    df[col] = df[col].fillna('')
+
+        return df
+
+
+# ===== PROGRESS TRACKING =====
+
+class ProgressTracker:
+    """Handles progress monitoring and statistics"""
+
+    def __init__(self, enable: bool = True, log_interval: int = 100, logger: logging.Logger = None):
+        self.enable = enable
+        self.log_interval = log_interval
         self.logger = logger or logging.getLogger(__name__)
 
-        # Progress tracking
         self.records_written = 0
         self.batches_written = 0
-        self.start_time = None
         self.bytes_written = 0
-
-        # State management
-        self.is_closed = False
-        self.header_written = False
-
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(self.file_path) or '.', exist_ok=True)
-
-    @abstractmethod
-    def write_header(self, columns: List[str]) -> None:
-        """Write file header with column information"""
-        pass
-
-    @abstractmethod
-    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
-        """Write batch of data"""
-        pass
-
-    @abstractmethod
-    def write_footer(self) -> None:
-        """Write file footer if needed"""
-        pass
-
-    @abstractmethod
-    def close(self) -> None:
-        """Close writer and finalize file"""
-        pass
-
-    def __enter__(self):
-        """Context manager entry"""
         self.start_time = time.time()
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        if not self.is_closed:
-            self.close()
+    def update(self, batch_size: int, bytes_written: int = 0):
+        """Update progress counters"""
+        if not self.enable:
+            return
 
-    def get_progress_stats(self) -> Dict[str, Any]:
-        """Get current progress statistics"""
-        current_time = time.time()
-        elapsed_time = current_time - (self.start_time or current_time)
+        self.records_written += batch_size
+        self.batches_written += 1
+        self.bytes_written += bytes_written
 
+        if self.batches_written % self.log_interval == 0:
+            self._log_progress()
+
+    def _log_progress(self):
+        """Log current progress"""
+        elapsed = time.time() - self.start_time
+        records_per_sec = self.records_written / elapsed if elapsed > 0 else 0
+        mb_per_sec = (self.bytes_written / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+
+        self.logger.info(
+            f"Progress: {self.records_written:,} records, "
+            f"{records_per_sec:.1f} records/sec, "
+            f"{mb_per_sec:.2f} MB/sec"
+        )
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current statistics"""
+        elapsed = time.time() - self.start_time
         return {
             'records_written': self.records_written,
             'batches_written': self.batches_written,
             'bytes_written': self.bytes_written,
-            'elapsed_time_seconds': elapsed_time,
-            'records_per_second': self.records_written / elapsed_time if elapsed_time > 0 else 0,
-            'mb_per_second': (self.bytes_written / (1024 * 1024)) / elapsed_time if elapsed_time > 0 else 0
+            'elapsed_seconds': elapsed,
+            'records_per_second': self.records_written / elapsed if elapsed > 0 else 0
         }
 
-    def _log_progress(self, batch_size: int):
-        """Log progress information"""
-        if self.enable_progress:
-            self.records_written += batch_size
-            self.batches_written += 1
 
-            if self.batches_written % 100 == 0:  # Log every 100 batches
-                stats = self.get_progress_stats()
-                self.logger.info(
-                    f"Progress: {stats['records_written']} records, "
-                    f"{stats['records_per_second']:.1f} records/sec, "
-                    f"{stats['mb_per_second']:.2f} MB/sec"
-                )
+# ===== CORE WRITER INTERFACE =====
 
+class StreamingWriter(ABC):
+    """Clean base interface for streaming writers"""
 
-class StreamingCSVWriter(StreamingWriter):
-    """
-    Streaming CSV writer with proper escaping and buffering
+    def __init__(self, file_path: str, config: OutputConfig, logger: logging.Logger = None):
+        self.file_path = file_path
+        self.config = config
+        self.logger = logger or logging.getLogger(__name__)
 
-    Features:
-    - RFC 4180 compliant CSV formatting
-    - Proper escaping of special characters
-    - Configurable delimiters and quote characters
-    - Memory-efficient buffered writing
-    """
+        # Create output directory
+        os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
 
-    def __init__(self, file_path: str, buffer_size: int = 8192,
-                 delimiter: str = ',', quote_char: str = '"',
-                 line_terminator: str = '\n', encoding: str = 'utf-8',
-                 enable_progress: bool = False, logger: Optional[logging.Logger] = None):
-        """
-        Initialize CSV writer
+        # Initialize components
+        self.optimizer = DataOptimizer(self.logger)
+        self.progress = ProgressTracker(config.enable_progress, config.log_every_n_batches, self.logger)
 
-        Args:
-            file_path: Output CSV file path
-            buffer_size: Buffer size for I/O operations
-            delimiter: Field delimiter character
-            quote_char: Quote character for escaping
-            line_terminator: Line terminator sequence
-            encoding: File encoding
-            enable_progress: Enable progress tracking
-            logger: Logger instance
-        """
-        super().__init__(file_path, buffer_size, enable_progress, logger)
+        self.is_closed = False
+        self.header_written = False
 
-        self.delimiter = delimiter
-        self.quote_char = quote_char
-        self.line_terminator = line_terminator
-        self.encoding = encoding
-
-        self.file_handle = None
-        self.columns = None
-
-        self._open_file()
-
-    def _open_file(self):
-        """Open CSV file for writing"""
-        try:
-            self.file_handle = open(
-                self.file_path, 'w',
-                buffering=self.buffer_size,
-                newline='',
-                encoding=self.encoding
-            )
-            self.logger.debug(f"Opened CSV file for writing: {self.file_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to open CSV file {self.file_path}: {e}")
-            raise
-
+    @abstractmethod
     def write_header(self, columns: List[str]) -> None:
-        """Write CSV header row"""
-        if self.header_written:
-            self.logger.warning("Header already written, skipping")
-            return
-
-        if not self.file_handle:
-            raise RuntimeError("File not open for writing")
-
-        self.columns = columns
-
-        # Escape column names if needed
-        escaped_columns = [self._escape_field(col) for col in columns]
-        header_line = self.delimiter.join(escaped_columns) + self.line_terminator
-
-        self.file_handle.write(header_line)
-        self.bytes_written += len(header_line.encode(self.encoding))
-        self.header_written = True
-
-        self.logger.debug(f"CSV header written with {len(columns)} columns")
-
-    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
-        """Write batch of data to CSV"""
-        if not self.file_handle or not self.columns:
-            raise RuntimeError("File not open or header not written")
-
-        if not batch:
-            return
-
-        batch_lines = []
-
-        for row in batch:
-            values = []
-            for col in self.columns:
-                value = row.get(col, '')
-                escaped_value = self._escape_field(value)
-                values.append(escaped_value)
-
-            line = self.delimiter.join(values) + self.line_terminator
-            batch_lines.append(line)
-
-        # Write all lines at once for better performance
-        batch_content = ''.join(batch_lines)
-        self.file_handle.write(batch_content)
-        self.bytes_written += len(batch_content.encode(self.encoding))
-
-        self._log_progress(len(batch))
-
-    def _escape_field(self, value: Any) -> str:
-        """Escape field value for CSV format"""
-        if value is None:
-            return ''
-
-        str_value = str(value)
-
-        # Check if escaping is needed
-        needs_quoting = (
-                self.delimiter in str_value or
-                self.quote_char in str_value or
-                self.line_terminator in str_value or
-                str_value.startswith(' ') or
-                str_value.endswith(' ')
-        )
-
-        if needs_quoting:
-            # Escape existing quote characters by doubling them
-            escaped_value = str_value.replace(self.quote_char, self.quote_char + self.quote_char)
-            return f"{self.quote_char}{escaped_value}{self.quote_char}"
-
-        return str_value
-
-    def write_footer(self) -> None:
-        """CSV doesn't require a footer"""
+        """Write file header"""
         pass
 
-    def close(self) -> None:
-        """Close CSV file"""
-        if self.file_handle and not self.is_closed:
-            self.file_handle.close()
-            self.file_handle = None
-            self.is_closed = True
-
-            stats = self.get_progress_stats()
-            self.logger.info(
-                f"CSV file completed: {self.file_path} "
-                f"({stats['records_written']} records, {stats['bytes_written']} bytes)"
-            )
-
-
-class StreamingJSONWriter(StreamingWriter):
-    """
-    Streaming JSON writer supporting both JSONL and JSON array formats
-
-    Features:
-    - JSONL (JSON Lines) format for streaming
-    - JSON array format for compatibility
-    - Configurable indentation and formatting
-    - Custom JSON serialization for complex types
-    """
-
-    def __init__(self, file_path: str, buffer_size: int = 8192,
-                 format_type: str = 'jsonl', indent: Optional[int] = None,
-                 ensure_ascii: bool = False, encoding: str = 'utf-8',
-                 enable_progress: bool = False, logger: Optional[logging.Logger] = None):
-        """
-        Initialize JSON writer
-
-        Args:
-            file_path: Output JSON file path
-            buffer_size: Buffer size for I/O operations
-            format_type: 'jsonl' for JSON Lines or 'array' for JSON array
-            indent: Indentation level for pretty printing
-            ensure_ascii: Ensure ASCII output
-            encoding: File encoding
-            enable_progress: Enable progress tracking
-            logger: Logger instance
-        """
-        super().__init__(file_path, buffer_size, enable_progress, logger)
-
-        self.format_type = format_type.lower()
-        self.indent = indent
-        self.ensure_ascii = ensure_ascii
-        self.encoding = encoding
-
-        self.file_handle = None
-        self.first_record = True
-
-        if self.format_type not in ['jsonl', 'array']:
-            raise ValueError(f"Unsupported format_type: {format_type}. Use 'jsonl' or 'array'")
-
-        self._open_file()
-
-    def _open_file(self):
-        """Open JSON file for writing"""
-        try:
-            self.file_handle = open(
-                self.file_path, 'w',
-                buffering=self.buffer_size,
-                encoding=self.encoding
-            )
-            self.logger.debug(f"Opened JSON file for writing: {self.file_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to open JSON file {self.file_path}: {e}")
-            raise
-
-    def write_header(self, columns: List[str]) -> None:
-        """Write JSON header if needed"""
-        if self.header_written:
-            return
-
-        if not self.file_handle:
-            raise RuntimeError("File not open for writing")
-
-        if self.format_type == 'array':
-            # Start JSON array
-            self.file_handle.write('[\n' if self.indent else '[')
-            self.bytes_written += len('[')
-
-        self.header_written = True
-        self.logger.debug(f"JSON header written for format: {self.format_type}")
-
+    @abstractmethod
     def write_batch(self, batch: List[Dict[str, Any]]) -> None:
-        """Write batch of data as JSON"""
-        if not self.file_handle:
-            raise RuntimeError("File not open for writing")
+        """Write batch of records"""
+        pass
 
-        if not batch:
-            return
-
-        if self.format_type == 'jsonl':
-            self._write_jsonl_batch(batch)
-        else:  # array format
-            self._write_array_batch(batch)
-
-        self._log_progress(len(batch))
-
-    def _write_jsonl_batch(self, batch: List[Dict[str, Any]]):
-        """Write batch in JSONL format"""
-        lines = []
-
-        for row in batch:
-            json_line = json.dumps(
-                row,
-                ensure_ascii=self.ensure_ascii,
-                default=self._json_serializer,
-                indent=self.indent
-            ) + '\n'
-            lines.append(json_line)
-
-        batch_content = ''.join(lines)
-        self.file_handle.write(batch_content)
-        self.bytes_written += len(batch_content.encode(self.encoding))
-
-    def _write_array_batch(self, batch: List[Dict[str, Any]]):
-        """Write batch in JSON array format"""
-        lines = []
-
-        for row in batch:
-            # Add comma separator for non-first records
-            if not self.first_record:
-                lines.append(',')
-                if self.indent:
-                    lines.append('\n')
-
-            json_str = json.dumps(
-                row,
-                ensure_ascii=self.ensure_ascii,
-                default=self._json_serializer,
-                indent=self.indent
-            )
-
-            if self.indent:
-                # Add proper indentation for array format
-                indented_lines = []
-                for line in json_str.split('\n'):
-                    if line.strip():
-                        indented_lines.append('  ' + line)
-                    else:
-                        indented_lines.append(line)
-                json_str = '\n'.join(indented_lines)
-                lines.append('\n' + json_str)
-            else:
-                lines.append(json_str)
-
-            self.first_record = False
-
-        batch_content = ''.join(lines)
-        self.file_handle.write(batch_content)
-        self.bytes_written += len(batch_content.encode(self.encoding))
-
-    def _json_serializer(self, obj: Any) -> Any:
-        """Custom JSON serializer for complex types"""
-        import datetime
-        import decimal
-
-        if isinstance(obj, datetime.datetime):
-            return obj.isoformat()
-        elif isinstance(obj, datetime.date):
-            return obj.isoformat()
-        elif isinstance(obj, datetime.time):
-            return obj.isoformat()
-        elif isinstance(obj, decimal.Decimal):
-            return float(obj)
-        elif hasattr(obj, '__dict__'):
-            return obj.__dict__
-        else:
-            return str(obj)
-
-    def write_footer(self) -> None:
-        """Write JSON footer if needed"""
-        if self.format_type == 'array' and self.file_handle:
-            footer = '\n]' if self.indent else ']'
-            self.file_handle.write(footer)
-            self.bytes_written += len(footer.encode(self.encoding))
-
+    @abstractmethod
     def close(self) -> None:
-        """Close JSON file"""
-        if self.file_handle and not self.is_closed:
-            self.write_footer()
-            self.file_handle.close()
-            self.file_handle = None
-            self.is_closed = True
+        """Close writer"""
+        pass
 
-            stats = self.get_progress_stats()
-            self.logger.info(
-                f"JSON file completed: {self.file_path} "
-                f"({stats['records_written']} records, {stats['bytes_written']} bytes)"
-            )
-
-
-class StreamingParquetWriter(StreamingWriter):
-    """
-    Streaming Parquet writer for columnar data storage
-
-    Features:
-    - Efficient columnar storage format
-    - Built-in compression
-    - Schema evolution support
-    - High performance for analytics workloads
-
-    Requires: pyarrow
-    """
-
-    def __init__(self, file_path: str, compression: str = 'snappy',
-                 row_group_size: int = 10000, enable_progress: bool = False,
-                 logger: Optional[logging.Logger] = None):
-        """
-        Initialize Parquet writer
-
-        Args:
-            file_path: Output Parquet file path
-            compression: Compression algorithm ('snappy', 'gzip', 'lz4')
-            row_group_size: Number of rows per row group
-            enable_progress: Enable progress tracking
-            logger: Logger instance
-        """
-        super().__init__(file_path, 0, enable_progress, logger)  # No buffer for Parquet
-
-        self.compression = compression
-        self.row_group_size = row_group_size
-
-        try:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-            self.pa = pa
-            self.pq = pq
-        except ImportError:
-            raise ImportError("pyarrow is required for Parquet writing. Install with: pip install pyarrow")
-
-        self.schema = None
-        self.writer = None
-        self.batch_buffer = []
-
-    def write_header(self, columns: List[str]) -> None:
-        """Initialize Parquet schema"""
-        if self.header_written:
-            return
-
-        # Create schema with string types by default
-        # Schema will be inferred from actual data
-        self.columns = columns
-        self.header_written = True
-
-        self.logger.debug(f"Parquet schema initialized with {len(columns)} columns")
-
-    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
-        """Write batch of data to Parquet"""
-        if not batch:
-            return
-
-        self.batch_buffer.extend(batch)
-
-        # Write when buffer reaches row group size
-        if len(self.batch_buffer) >= self.row_group_size:
-            self._write_row_group()
-
-        self._log_progress(len(batch))
-
-    def _write_row_group(self):
-        """Write accumulated batch buffer as a row group"""
-        if not self.batch_buffer:
-            return
-
-        try:
-            # Convert to PyArrow table
-            table = self.pa.Table.from_pylist(self.batch_buffer)
-
-            if self.writer is None:
-                # Initialize writer with inferred schema
-                self.schema = table.schema
-                self.writer = self.pq.ParquetWriter(
-                    self.file_path,
-                    self.schema,
-                    compression=self.compression
-                )
-                self.logger.debug(f"Parquet writer initialized with schema: {self.schema}")
-
-            # Write row group
-            self.writer.write_table(table)
-
-            # Clear buffer
-            self.batch_buffer.clear()
-
-        except Exception as e:
-            self.logger.error(f"Failed to write Parquet row group: {e}")
-            raise
-
+    @abstractmethod
     def write_footer(self) -> None:
-        """Write remaining data"""
-        if self.batch_buffer:
-            self._write_row_group()
+        """Write file footer"""
+        pass
 
-    def close(self) -> None:
-        """Close Parquet writer"""
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         if not self.is_closed:
-            self.write_footer()
-
-            if self.writer:
-                self.writer.close()
-                self.writer = None
-
-            self.is_closed = True
-
-            stats = self.get_progress_stats()
-            self.logger.info(
-                f"Parquet file completed: {self.file_path} "
-                f"({stats['records_written']} records)"
-            )
+            self.close()
 
 
-class StreamingExcelWriter(StreamingWriter):
-    """
-    Streaming Excel writer for business reporting
+# ===== FORMAT-SPECIFIC WRITERS =====
 
-    Features:
-    - Multiple worksheets support
-    - Formatting and styling options
-    - Large dataset handling
-    - Memory-efficient writing
+class CSVWriter(StreamingWriter):
+    """Clean CSV writer implementation"""
 
-    Requires: openpyxl
-    """
+    def __init__(self, file_path: str, config: OutputConfig, **kwargs):
+        super().__init__(file_path, config)
+        self.delimiter = config.csv_delimiter
+        self.quote_char = config.csv_quotechar
+        self.include_header = config.include_header
 
-    def __init__(self, file_path: str, worksheet_name: str = 'Sheet1',
-                 max_rows_per_sheet: int = 1000000, enable_progress: bool = False,
-                 logger: Optional[logging.Logger] = None):
-        """
-        Initialize Excel writer
-
-        Args:
-            file_path: Output Excel file path
-            worksheet_name: Name of the worksheet
-            max_rows_per_sheet: Maximum rows per worksheet
-            enable_progress: Enable progress tracking
-            logger: Logger instance
-        """
-        super().__init__(file_path, 0, enable_progress, logger)  # No buffer for Excel
-
-        self.worksheet_name = worksheet_name
-        self.max_rows_per_sheet = max_rows_per_sheet
-
-        try:
-            from openpyxl import Workbook
-            from openpyxl.utils import get_column_letter
-            self.Workbook = Workbook
-            self.get_column_letter = get_column_letter
-        except ImportError:
-            raise ImportError("openpyxl is required for Excel writing. Install with: pip install openpyxl")
-
-        self.workbook = None
-        self.worksheet = None
-        self.current_row = 1
-        self.current_sheet_number = 1
+        self.file_handle = open(
+            file_path, 'w',
+            buffering=config.buffer_size,
+            encoding=config.encoding,
+            newline=''
+        )
         self.columns = None
 
     def write_header(self, columns: List[str]) -> None:
-        """Write Excel header row"""
         if self.header_written:
             return
-
-        self.columns = columns
-
-        # Initialize workbook and worksheet
-        self.workbook = self.Workbook()
-        self.worksheet = self.workbook.active
-        self.worksheet.title = self.worksheet_name
-
-        # Write header row
-        for col_idx, column_name in enumerate(columns, 1):
-            self.worksheet.cell(row=1, column=col_idx, value=column_name)
-
-        self.current_row = 2
-        self.header_written = True
-
-        self.logger.debug(f"Excel header written with {len(columns)} columns")
-
-    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
-        """Write batch of data to Excel"""
-        if not self.worksheet or not self.columns:
-            raise RuntimeError("Worksheet not initialized or header not written")
-
-        if not batch:
-            return
-
-        for row_data in batch:
-            # Check if we need a new worksheet
-            if self.current_row > self.max_rows_per_sheet:
-                self._create_new_worksheet()
-
-            # Write row data
-            for col_idx, column_name in enumerate(self.columns, 1):
-                value = row_data.get(column_name, '')
-                self.worksheet.cell(row=self.current_row, column=col_idx, value=value)
-
-            self.current_row += 1
-
-        self._log_progress(len(batch))
-
-    def _create_new_worksheet(self):
-        """Create a new worksheet when row limit is reached"""
-        self.current_sheet_number += 1
-        sheet_name = f"{self.worksheet_name}_{self.current_sheet_number}"
-
-        self.worksheet = self.workbook.create_sheet(title=sheet_name)
-
-        # Write header to new sheet
-        for col_idx, column_name in enumerate(self.columns, 1):
-            self.worksheet.cell(row=1, column=col_idx, value=column_name)
-
-        self.current_row = 2
-
-        self.logger.info(f"Created new worksheet: {sheet_name}")
-
-    def write_footer(self) -> None:
-        """Excel doesn't require a footer"""
-        pass
-
-    def close(self) -> None:
-        """Close Excel writer and save file"""
-        if not self.is_closed and self.workbook:
-            try:
-                self.workbook.save(self.file_path)
-                self.workbook = None
-                self.worksheet = None
-                self.is_closed = True
-
-                stats = self.get_progress_stats()
-                self.logger.info(
-                    f"Excel file completed: {self.file_path} "
-                    f"({stats['records_written']} records, {self.current_sheet_number} sheets)"
-                )
-            except Exception as e:
-                self.logger.error(f"Failed to save Excel file: {e}")
-                raise
-
-
-class StreamingFixedWidthWriter(StreamingWriter):
-    """
-    Streaming Fixed Width writer for legacy systems and mainframe compatibility
-
-    Features:
-    - Configurable column widths with defaults
-    - Multiple alignment options (left, right, center)
-    - Memory-efficient buffered writing
-    - Proper padding and truncation handling
-    - Support for numeric alignment preferences
-    - Header row support
-    - Optional pandas integration for intelligent type detection
-    """
-
-    def __init__(self, file_path: str, buffer_size: int = 8192,
-                 column_widths: Dict[str, int] = None,
-                 default_column_width: int = 20,
-                 padding_char: str = ' ',
-                 alignment: str = 'left',
-                 numeric_alignment: str = 'right',
-                 include_header: bool = True,
-                 encoding: str = 'utf-8',
-                 enable_progress: bool = False,
-                 logger: Optional[logging.Logger] = None):
-        """
-        Initialize Fixed Width writer
-
-        Args:
-            file_path: Output fixed-width file path
-            buffer_size: Buffer size for I/O operations
-            column_widths: Dictionary mapping column names to their widths
-            default_column_width: Default width for columns not specified in column_widths
-            padding_char: Character used for padding (usually space)
-            alignment: Default alignment for text columns ('left', 'right', 'center')
-            numeric_alignment: Alignment for numeric columns ('left', 'right', 'center')
-            include_header: Whether to include header row
-            encoding: File encoding
-            enable_progress: Enable progress tracking
-            logger: Logger instance
-        """
-        super().__init__(file_path, buffer_size, enable_progress, logger)
-
-        self.column_widths = column_widths or {}
-        self.default_column_width = default_column_width
-        self.padding_char = padding_char
-        self.alignment = alignment
-        self.numeric_alignment = numeric_alignment
-        self.include_header = include_header
-        self.encoding = encoding
-
-        self.file_handle = None
-        self.columns = None
-        self.column_types = {}  # Cache for column type detection
-
-        self._open_file()
-
-    def _open_file(self):
-        """Open fixed-width file for writing"""
-        try:
-            self.file_handle = open(
-                self.file_path, 'w',
-                buffering=self.buffer_size,
-                encoding=self.encoding
-            )
-            self.logger.debug(f"Opened fixed-width file for writing: {self.file_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to open fixed-width file {self.file_path}: {e}")
-            raise
-
-    def write_header(self, columns: List[str]) -> None:
-        """Write fixed-width header row"""
-        if self.header_written:
-            self.logger.warning("Header already written, skipping")
-            return
-
-        if not self.file_handle:
-            raise RuntimeError("File not open for writing")
 
         self.columns = columns
 
         if self.include_header:
-            header_line = self._format_header()
-            self.file_handle.write(header_line)
-            self.bytes_written += len(header_line.encode(self.encoding))
+            # Use pandas for consistent header formatting
+            pd.DataFrame(columns=columns).to_csv(
+                self.file_handle,
+                sep=self.delimiter,
+                quotechar=self.quote_char,
+                index=False,
+                header=True
+            )
 
         self.header_written = True
-        self.logger.debug(f"Fixed-width header written with {len(columns)} columns")
 
     def write_batch(self, batch: List[Dict[str, Any]]) -> None:
-        """Write batch of data to fixed-width format"""
-        if not self.file_handle or not self.columns:
-            raise RuntimeError("File not open or header not written")
-
         if not batch:
             return
 
-        # Detect column types from first batch for better formatting
-        if not self.column_types and batch:
-            self._detect_column_types(batch)
+        # Optimize with pandas
+        df = pd.DataFrame(batch)
+        df = self.optimizer.optimize_dataframe(df)
 
-        batch_lines = []
+        # Write using pandas
+        df.to_csv(
+            self.file_handle,
+            sep=self.delimiter,
+            quotechar=self.quote_char,
+            index=False,
+            header=False,
+            mode='a'
+        )
 
-        for row in batch:
-            formatted_row = self._format_row(row)
-            batch_lines.append(formatted_row)
-
-        # Write all lines at once for better performance
-        batch_content = ''.join(batch_lines)
-        self.file_handle.write(batch_content)
-        self.bytes_written += len(batch_content.encode(self.encoding))
-
-        self._log_progress(len(batch))
-
-    def _detect_column_types(self, batch: List[Dict[str, Any]]) -> None:
-        """Detect column types from sample data for better formatting"""
-        try:
-            if HAS_PANDAS:
-                # Create a small sample for type detection
-                sample_size = min(100, len(batch))
-                sample_data = batch[:sample_size]
-
-                # Convert to DataFrame for type inference
-                df = pd.DataFrame(sample_data)
-
-                for column in self.columns:
-                    if column in df.columns:
-                        if pd.api.types.is_numeric_dtype(df[column]):
-                            self.column_types[column] = 'numeric'
-                        elif pd.api.types.is_datetime64_any_dtype(df[column]):
-                            self.column_types[column] = 'datetime'
-                        else:
-                            self.column_types[column] = 'text'
-                    else:
-                        self.column_types[column] = 'text'
-            else:
-                # Fallback without pandas - simple type detection
-                self.logger.debug("Pandas not available, using simple type detection")
-                for column in self.columns:
-                    self.column_types[column] = 'text'
-
-                    # Sample a few values to detect numeric columns
-                    for row in batch[:10]:  # Check first 10 rows
-                        value = row.get(column)
-                        if value is not None:
-                            try:
-                                float(value)
-                                self.column_types[column] = 'numeric'
-                                break
-                            except (ValueError, TypeError):
-                                continue
-
-        except Exception as e:
-            self.logger.warning(f"Type detection failed: {e}")
-            # Default all to text
-            for column in self.columns:
-                self.column_types[column] = 'text'
-
-    def _get_column_width(self, column_name: str) -> int:
-        """Get the width for a specific column"""
-        return self.column_widths.get(column_name, self.default_column_width)
-
-    def _get_column_alignment(self, column_name: str) -> str:
-        """Get alignment for a specific column based on its type"""
-        column_type = self.column_types.get(column_name, 'text')
-
-        if column_type == 'numeric':
-            return self.numeric_alignment
-        else:
-            return self.alignment
-
-    def _format_value(self, value: Any, width: int, alignment: str = 'left') -> str:
-        """Format a single value to fixed width with specified alignment"""
-        if value is None:
-            str_value = ''
-        else:
-            str_value = str(value)
-
-        # Truncate if too long
-        if len(str_value) > width:
-            str_value = str_value[:width]
-
-        # Apply alignment and padding
-        if alignment == 'left':
-            return str_value.ljust(width, self.padding_char)
-        elif alignment == 'right':
-            return str_value.rjust(width, self.padding_char)
-        elif alignment == 'center':
-            return str_value.center(width, self.padding_char)
-        else:
-            return str_value.ljust(width, self.padding_char)
-
-    def _format_header(self) -> str:
-        """Format the header row"""
-        header_parts = []
-        for col in self.columns:
-            width = self._get_column_width(col)
-            alignment = self._get_column_alignment(col)
-            formatted_col = self._format_value(col, width, alignment)
-            header_parts.append(formatted_col)
-        return ''.join(header_parts) + '\n'
-
-    def _format_row(self, row: Dict[str, Any]) -> str:
-        """Format a single data row"""
-        row_parts = []
-        for col in self.columns:
-            value = row.get(col, '')
-            width = self._get_column_width(col)
-            alignment = self._get_column_alignment(col)
-
-            formatted_value = self._format_value(value, width, alignment)
-            row_parts.append(formatted_value)
-
-        return ''.join(row_parts) + '\n'
-
-    def write_footer(self) -> None:
-        """Fixed-width files don't require a footer"""
-        pass
+        # Estimate bytes written
+        estimated_bytes = len(df) * len(df.columns) * 10
+        self.progress.update(len(batch), estimated_bytes)
 
     def close(self) -> None:
-        """Close fixed-width file"""
-        if self.file_handle and not self.is_closed:
+        if not self.is_closed:
             self.file_handle.close()
-            self.file_handle = None
             self.is_closed = True
+            stats = self.progress.get_stats()
+            self.logger.info(f"CSV completed: {stats['records_written']:,} records")
 
-            stats = self.get_progress_stats()
-            self.logger.info(
-                f"Fixed-width file completed: {self.file_path} "
-                f"({stats['records_written']} records, {stats['bytes_written']} bytes)"
+    def write_footer(self) -> None:
+        """CSV files don't need a footer"""
+        pass
+
+
+class JSONLWriter(StreamingWriter):
+    """Clean JSONL writer implementation"""
+
+    def __init__(self, file_path: str, config: OutputConfig, **kwargs):
+        super().__init__(file_path, config)
+        self.indent = config.json_indent
+        self.ensure_ascii = config.json_ensure_ascii
+
+        self.file_handle = open(
+            file_path, 'w',
+            buffering=config.buffer_size,
+            encoding=config.encoding
+        )
+
+    def write_header(self, columns: List[str]) -> None:
+        self.columns = columns
+        self.header_written = True
+
+    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
+        if not batch:
+            return
+
+        # Optimize with pandas
+        df = pd.DataFrame(batch)
+        df = self.optimizer.optimize_dataframe(df)
+
+        # Convert back to records and serialize
+        records = df.to_dict('records')
+        lines = []
+
+        for record in records:
+            # Clean pandas/numpy types for JSON
+            cleaned = self._clean_for_json(record)
+            line = json.dumps(
+                cleaned,
+                ensure_ascii=self.ensure_ascii,
+                indent=self.indent,
+                default=self._json_serializer
+            ) + '\n'
+            lines.append(line)
+
+        content = ''.join(lines)
+        self.file_handle.write(content)
+
+        self.progress.update(len(batch), len(content.encode(self.config.encoding)))
+
+    def _clean_for_json(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert pandas/numpy types to JSON-serializable types"""
+        cleaned = {}
+        for key, value in record.items():
+            if pd.isna(value):
+                cleaned[key] = None
+            elif isinstance(value, (np.integer, np.int64, np.int32)):
+                cleaned[key] = int(value)
+            elif isinstance(value, (np.floating, np.float64, np.float32)):
+                cleaned[key] = float(value) if np.isfinite(value) else None
+            elif isinstance(value, np.bool_):
+                cleaned[key] = bool(value)
+            elif isinstance(value, pd.Timestamp):
+                cleaned[key] = value.isoformat()
+            else:
+                cleaned[key] = value
+        return cleaned
+
+    def _json_serializer(self, obj):
+        """Handle additional types for JSON serialization"""
+        if isinstance(obj, pd.Timestamp):
+            return obj.isoformat()
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif hasattr(obj, 'item'):  # numpy scalar
+            return obj.item()
+        return str(obj)
+
+    def close(self) -> None:
+        if not self.is_closed:
+            self.file_handle.close()
+            self.is_closed = True
+            stats = self.progress.get_stats()
+            self.logger.info(f"JSONL completed: {stats['records_written']:,} records")
+
+    def write_footer(self) -> None:
+        """JSONL files don't need a footer"""
+        pass
+
+
+class ParquetWriter(StreamingWriter):
+    """Clean Parquet writer implementation"""
+
+    def __init__(self, file_path: str, config: OutputConfig, **kwargs):
+        super().__init__(file_path, config)
+
+        if not HAS_PYARROW:
+            raise ImportError("pyarrow required for Parquet writing")
+
+        self.compression = config.parquet_compression
+        self.row_group_size = config.parquet_row_group_size
+
+        self.writer = None
+        self.batch_buffer = []
+        self.schema = None
+
+    def write_header(self, columns: List[str]) -> None:
+        self.columns = columns
+        self.header_written = True
+
+    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
+        if not batch:
+            return
+
+        # Optimize with pandas
+        df = pd.DataFrame(batch)
+        df = self.optimizer.optimize_dataframe(df)
+
+        self.batch_buffer.append(df)
+
+        # Write row group when buffer is full
+        total_rows = sum(len(df) for df in self.batch_buffer)
+        if total_rows >= self.row_group_size:
+            self._write_row_group()
+
+        self.progress.update(len(batch))
+
+    def _write_row_group(self):
+        """Write accumulated batches as a row group"""
+        if not self.batch_buffer:
+            return
+
+        # Combine all DataFrames
+        combined_df = pd.concat(self.batch_buffer, ignore_index=True)
+
+        # Convert to PyArrow table
+        table = pa.Table.from_pandas(combined_df, preserve_index=False)
+
+        # Initialize writer if needed
+        if self.writer is None:
+            self.schema = table.schema
+            self.writer = pq.ParquetWriter(
+                self.file_path,
+                self.schema,
+                compression=self.compression
             )
 
+        # Write table
+        self.writer.write_table(table)
+        self.batch_buffer.clear()
 
-# ===================== WRITER FACTORY =====================
+    def close(self) -> None:
+        if not self.is_closed:
+            # Write remaining data
+            if self.batch_buffer:
+                self._write_row_group()
 
-class WriterFactory:
-    """
-    Factory class for creating streaming writers based on file extension or format
-    """
-    def __init__(self, table_name, output_config):
-        self.table_name = table_name
-        self.output_config = output_config
-        self.file_path = output_config.get_output_path(table_name)
-        self.format_type = output_config.format
+            if self.writer:
+                self.writer.close()
 
-    def filter_kwargs_for_class(self, cls, kwargs):
-        # Get the parameter names from the class's __init__ method
-        init_params = inspect.signature(cls.__init__).parameters
-        valid_keys = [k for k in init_params if k != 'self']
+            self.is_closed = True
+            stats = self.progress.get_stats()
+            self.logger.info(f"Parquet completed: {stats['records_written']:,} records")
 
-        # Filter kwargs to include only valid keys
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_keys}
-        return filtered_kwargs
-
-    def create_writer(self, **kwargs) -> StreamingWriter:
-        if self.format_type:
-            writer_format = self.format_type.lower()
-        else:
-            _, ext = os.path.splitext(self.file_path)
-            writer_format = ext.lower().lstrip('.')
-
-        if writer_format in ['csv', 'tsv']:
-            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
-            delimiter = '\t' if writer_format == 'tsv' else kwargs.get('delimiter', ',')
-            return StreamingCSVWriter(self.file_path, delimiter=delimiter, **filtered)
-
-        elif writer_format in ['json', 'jsonl']:
-            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
-            format_type = 'jsonl' if writer_format == 'jsonl' else kwargs.get('format_type', 'jsonl')
-            return StreamingJSONWriter(self.file_path, format_type=format_type, **filtered)
-
-        elif writer_format == 'parquet':
-            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
-            return StreamingParquetWriter(self.file_path, **filtered)
-
-        elif writer_format in ['xlsx', 'excel']:
-            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
-            return StreamingExcelWriter(self.file_path, **filtered)
-
-        elif writer_format in ['dat', 'txt', 'fixed', 'fixedwidth']:
-            filtered = self.filter_kwargs_for_class(StreamingFixedWidthWriter, kwargs)
-            return StreamingFixedWidthWriter(self.file_path, **filtered)
-
-        else:
-            raise ValueError(
-                f"Unsupported format: {writer_format}. "
-                f"Supported formats: {', '.join(self.get_supported_formats())}"
-            )
-
-    def get_supported_formats(self) -> List[str]:
-        """Get list of supported output formats"""
-        return ['csv', 'tsv', 'json', 'jsonl', 'parquet', 'xlsx', 'dat', 'txt', 'fixed']
+    def write_footer(self) -> None:
+        """Write remaining buffered data as final row group"""
+        if self.batch_buffer:
+            self._write_row_group()
 
 
-# ===================== COMPRESSION UTILITIES =====================
+# ===== COMPRESSION SUPPORT =====
 
-class CompressionWriter:
-    """
-    Wrapper for adding compression to any streaming writer
-    """
+class CompressionWriter(StreamingWriter):
+    """Decorator that adds compression to any writer"""
 
-    def __init__(self, writer: StreamingWriter, compression: str = 'gzip'):
-        """
-        Initialize compression wrapper
-
-        Args:
-            writer: Base streaming writer
-            compression: Compression type ('gzip', 'bz2', 'lzma')
-        """
-        self.writer = writer
+    def __init__(self, base_writer: StreamingWriter, file_path: str, config: OutputConfig, compression: str = 'gzip'):
+        super().__init__(file_path, config)
+        self.base_writer = base_writer
         self.compression = compression.lower()
 
+        # Validate compression type
         if self.compression not in ['gzip', 'bz2', 'lzma']:
             raise ValueError(f"Unsupported compression: {compression}")
 
         # Update file path with compression extension
-        if not self.writer.file_path.endswith(f'.{self.compression}'):
-            self.writer.file_path += f'.{self.compression}'
+        if not self.base_writer.file_path.endswith(f'.{self.compression}'):
+            self.base_writer.file_path += f'.{self.compression}'
 
+        # Replace file handle with compressed version
         self._setup_compression()
 
     def _setup_compression(self):
-        """Setup compression based on type"""
+        """Replace the base writer's file handle with compressed version"""
         import gzip
         import bz2
         import lzma
 
-        original_open = self.writer._open_file
+        # Close original file handle if open
+        if hasattr(self.base_writer, 'file_handle') and self.base_writer.file_handle:
+            self.base_writer.file_handle.close()
 
-        def compressed_open():
-            if self.compression == 'gzip':
-                self.writer.file_handle = gzip.open(
-                    self.writer.file_path, 'wt',
-                    encoding=getattr(self.writer, 'encoding', 'utf-8'),
-                    buffering=self.writer.buffer_size
-                )
-            elif self.compression == 'bz2':
-                self.writer.file_handle = bz2.open(
-                    self.writer.file_path, 'wt',
-                    encoding=getattr(self.writer, 'encoding', 'utf-8')
-                )
-            elif self.compression == 'lzma':
-                self.writer.file_handle = lzma.open(
-                    self.writer.file_path, 'wt',
-                    encoding=getattr(self.writer, 'encoding', 'utf-8')
-                )
+        # Create compressed file handle
+        if self.compression == 'gzip':
+            self.base_writer.file_handle = gzip.open(
+                self.base_writer.file_path, 'wt',
+                encoding=self.base_writer.config.encoding,
+                buffering=self.base_writer.config.buffer_size
+            )
+        elif self.compression == 'bz2':
+            self.base_writer.file_handle = bz2.open(
+                self.base_writer.file_path, 'wt',
+                encoding=self.base_writer.config.encoding
+            )
+        elif self.compression == 'lzma':
+            self.base_writer.file_handle = lzma.open(
+                self.base_writer.file_path, 'wt',
+                encoding=self.base_writer.config.encoding
+            )
 
-        self.writer._open_file = compressed_open
+    def write_header(self, columns: List[str]) -> None:
+        """Delegate to base writer"""
+        self.base_writer.write_header(columns)
+
+    def write_batch(self, batch: List[Dict[str, Any]]) -> None:
+        """Delegate to base writer"""
+        self.base_writer.write_batch(batch)
+
+    def write_footer(self) -> None:
+        """Delegate to base writer"""
+        self.base_writer.write_footer()
+
+    def close(self) -> None:
+        """Delegate to base writer"""
+        self.base_writer.close()
 
     def __getattr__(self, name):
-        """Delegate all other methods to the wrapped writer"""
-        return getattr(self.writer, name)
+        """Delegate all other attributes to base writer"""
+        return getattr(self.base_writer, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
 
-# ===================== EXAMPLE USAGE =====================
+# ===== FACTORY =====
 
-def example_usage():
-    """
-    Example usage of streaming writers
-    """
-    import logging
+class WriterFactory:
+    """Clean factory for creating writers with optional compression"""
 
-    # Setup logging
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
+    @staticmethod
+    def create_writer(table_name: str, config: OutputConfig, compression: Optional[str] = None, **kwargs) -> StreamingWriter:
+        """Create appropriate writer based on config"""
+        file_path = config.get_output_path(table_name)
 
-    # Sample data
-    sample_data = [
-        {'id': i, 'name': f'User {i}', 'email': f'user{i}@example.com', 'age': 20 + (i % 50)}
-        for i in range(1, 1001)
-    ]
+        # Use compression from parameter or config
+        compression = compression or config.compression
 
-    columns = ['id', 'name', 'email', 'age']
+        writers = {
+            'csv': CSVWriter,
+            'tsv': lambda path, cfg, **kw: CSVWriter(path, cfg, delimiter='\t', **kw),
+            'jsonl': JSONLWriter,
+            'json': JSONLWriter,
+            'parquet': ParquetWriter
+        }
 
-    # Example 1: CSV Writer
-    print("Writing CSV file...")
-    with StreamingCSVWriter('output/example.csv', enable_progress=True, logger=logger) as writer:
-        writer.write_header(columns)
+        writer_class = writers.get(config.format)
+        if not writer_class:
+            raise ValueError(f"Unsupported format: {config.format}")
 
-        # Write in batches
-        batch_size = 100
-        for i in range(0, len(sample_data), batch_size):
-            batch = sample_data[i:i + batch_size]
-            writer.write_batch(batch)
+        # Create base writer
+        base_writer = writer_class(file_path, config, **kwargs)
 
-    # Example 2: JSON Writer (JSONL format)
-    print("Writing JSONL file...")
-    with StreamingJSONWriter('output/example.jsonl', format_type='jsonl',
-                             enable_progress=True, logger=logger) as writer:
-        writer.write_header(columns)
+        # Wrap with compression if requested
+        if compression:
+            return CompressionWriter(base_writer, compression)
 
-        for i in range(0, len(sample_data), batch_size):
-            batch = sample_data[i:i + batch_size]
-            writer.write_batch(batch)
-
-    # Example 3: Using Writer Factory
-    print("Using Writer Factory...")
-    writer = WriterFactory.create_writer('output/example_factory.csv', enable_progress=True, logger=logger)
-
-    with writer:
-        writer.write_header(columns)
-        writer.write_batch(sample_data)
-
-    # Example 4: Compressed CSV
-    print("Writing compressed CSV...")
-    base_writer = StreamingCSVWriter('output/example_compressed.csv', enable_progress=True, logger=logger)
-    compressed_writer = CompressionWriter(base_writer, compression='gzip')
-
-    with compressed_writer:
-        compressed_writer.write_header(columns)
-        compressed_writer.write_batch(sample_data)
-
-    # Example 5: Fixed Width Writer
-    print("Writing Fixed-Width file...")
-    # Define custom column widths
-    custom_widths = {
-        'id': 8,
-        'name': 25,
-        'email': 35,
-        'age': 5
-    }
-
-    with StreamingFixedWidthWriter('output/example.dat',
-                                  column_widths=custom_widths,
-                                  alignment='left',
-                                  numeric_alignment='right',
-                                  enable_progress=True,
-                                  logger=logger) as writer:
-        writer.write_header(columns)
-
-        for i in range(0, len(sample_data), batch_size):
-            batch = sample_data[i:i + batch_size]
-            writer.write_batch(batch)
-
-    # Example 6: Using Writer Factory for Fixed Width
-    print("Using Writer Factory for Fixed Width...")
-    writer = WriterFactory.create_writer('output/example_factory.dat',
-                                        column_widths={'id': 6, 'name': 20, 'email': 30, 'age': 4},
-                                        enable_progress=True,
-                                        logger=logger)
-
-    with writer:
-        writer.write_header(columns)
-        writer.write_batch(sample_data)
-
-    print("Examples completed successfully!")
-
-
-if __name__ == "__main__":
-    example_usage()
+        return base_writer
