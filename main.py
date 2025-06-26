@@ -18,6 +18,8 @@ from config_manager.config_manager import ConfigurationManager, GenerationConfig
 from writers.writer import CSVWriter, ParquetWriter, JsonWriter, SQLQueryWriter, FixedWidthWriter
 from data_generator.data_generator import DataGenerator
 
+from writers.unified_writer import UnifiedWriterFactory, UnifiedWriter
+
 
 class OptimizedDataGenerationEngine:
     """
@@ -104,10 +106,6 @@ class OptimizedDataGenerationEngine:
                     table_metadata, total_records, foreign_key_data, output_dir
                 )
 
-                # ✅ Apply security consistently for ALL modes
-                if self.config.security.enable_data_masking:
-                    generated_data = self._apply_comprehensive_security_measures(generated_data, table_metadata)
-
             # Calculate generation statistics
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -160,7 +158,7 @@ class OptimizedDataGenerationEngine:
             generated_fk_data = self._extract_foreign_key_data(generated_data, table_metadata)
 
             strategy_name = "streaming" if self.streaming_used else "parallel/adaptive"
-            self.logger.info(f"✅ Completed {table_name}: {len(generated_data):,} records in {duration:.2f}s")
+            self.logger.info(f"✅ Completed {table_name}: {len(generated_data):,} records in {duration:.2f}s using {strategy_name} strategy")
 
             # Log performance summary
             if quality_analysis:
