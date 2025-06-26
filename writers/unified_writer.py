@@ -13,10 +13,300 @@ import os
 import logging
 from typing import Dict, List, Any, Optional
 import pandas as pd
+import time
+import numpy as np
+
 from config_manager.config_manager import OutputConfig
 
-# Import existing components that work
-from writers.streaming_writers import DataOptimizer, ProgressTracker, FixedWidthFormatter
+
+class FixedWidthFormatter:
+    """Handles fixed-width formatting for any data format"""
+
+    def __init__(self, output_config):
+        self.column_widths = getattr(output_config, 'column_widths', {})
+        self.default_width = getattr(output_config, 'default_column_width', 20)
+        self.padding_char = getattr(output_config, 'padding_char', ' ')
+        self.alignment = getattr(output_config, 'alignment', 'left')
+        self.numeric_alignment = getattr(output_config, 'numeric_alignment', 'right')
+        self.truncate_char = getattr(output_config, 'truncate_char', '…')
+        self.enable_fixed_width = getattr(output_config, 'enable_fixed_width', False)
+
+        # Auto-sizing options
+        self.auto_size_columns = getattr(output_config, 'auto_size_columns', False)
+        self.max_auto_width = getattr(output_config, 'max_auto_width', 50)
+        self.min_auto_width = getattr(output_config, 'min_auto_width', 8)
+
+        self._analyzed_widths = {}
+
+    def analyze_data_for_widths(self, df: pd.DataFrame):
+        """Analyze data to determine optimal column widths"""
+        if not self.auto_size_columns or not self.enable_fixed_width:
+            return
+
+        for col in df.columns:
+            if col not in self._analyzed_widths:
+                # Calculate max width needed for this column
+                col_data = df[col].astype(str)
+                max_content_width = col_data.str.len().max() if len(col_data) > 0 else 0
+                header_width = len(str(col))
+
+                # Use the maximum of content width and header width
+                optimal_width = max(max_content_width, header_width)
+
+                # Apply min/max constraints
+                optimal_width = max(self.min_auto_width, min(optimal_width, self.max_auto_width))
+
+                self._analyzed_widths[col] = optimal_width
+
+    def get_column_width(self, column_name: str) -> int:
+        """Get width for a specific column"""
+        # Priority: explicit config > auto-analyzed > default
+        if column_name in self.column_widths:
+            return self.column_widths[column_name]
+        elif column_name in self._analyzed_widths:
+            return self._analyzed_widths[column_name]
+        else:
+            return self.default_width
+
+    def format_value(self, value: Any, width: int, alignment: str = None, is_numeric: bool = False) -> str:
+        """Format a single value to fixed width"""
+        if not self.enable_fixed_width:
+            return str(value) if not pd.isna(value) else ''
+
+        if pd.isna(value):
+            str_value = ''
+        else:
+            str_value = str(value)
+
+        # Use numeric alignment for numbers if not specified
+        if alignment is None:
+            alignment = self.numeric_alignment if is_numeric else self.alignment
+
+        # Handle truncation with indicator
+        if len(str_value) > width:
+            if width > 1:
+                str_value = str_value[:width - 1] + self.truncate_char
+            else:
+                str_value = str_value[:width]
+
+        # Apply alignment and padding
+        if alignment == 'left':
+            return str_value.ljust(width, self.padding_char)
+        elif alignment == 'right':
+            return str_value.rjust(width, self.padding_char)
+        elif alignment == 'center':
+            return str_value.center(width, self.padding_char)
+        else:
+            return str_value.ljust(width, self.padding_char)
+
+    def format_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply fixed-width formatting to entire DataFrame"""
+        if not self.enable_fixed_width or df.empty:
+            return df
+
+        # Analyze data for auto-sizing
+        self.analyze_data_for_widths(df)
+
+        # Create formatted copy
+        formatted_df = df.copy()
+
+        for col in df.columns:
+            width = self.get_column_width(col)
+            is_numeric = pd.api.types.is_numeric_dtype(df[col])
+
+            # Format each value in the column
+            formatted_df[col] = df[col].apply(
+                lambda x: self.format_value(x, width, is_numeric=is_numeric)
+            )
+
+        return formatted_df
+
+    def format_header_row(self, columns: List[str]) -> List[str]:
+        """Format header columns to fixed width"""
+        if not self.enable_fixed_width:
+            return columns
+
+        formatted_headers = []
+        for col in columns:
+            width = self.get_column_width(col)
+            formatted_col = self.format_value(col, width, self.alignment)
+            formatted_headers.append(formatted_col)
+
+        return formatted_headers
+
+
+class DataOptimizer:
+    """Handles pandas data type optimization and cleaning"""
+
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+        self.schema_cache = {}
+        self.datetime_formats = {}
+
+    def optimize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply all optimizations to a DataFrame"""
+        if df.empty:
+            return df
+
+        # Cache schema from first batch
+        if not self.schema_cache:
+            self._infer_schema(df)
+
+        # Apply optimizations
+        df = self._optimize_dtypes(df)
+        df = self._clean_data(df)
+        return df
+
+    def _infer_schema(self, df: pd.DataFrame):
+        """Infer optimal data types for each column"""
+        for col in df.columns:
+            series = df[col].dropna()
+            if len(series) == 0:
+                continue
+
+            # Numeric optimization
+            if pd.api.types.is_numeric_dtype(series):
+                self.schema_cache[col] = self._get_optimal_numeric_type(series)
+
+            # Datetime detection
+            elif self._is_datetime_column(series):
+                self.schema_cache[col] = 'datetime64[ns]'
+
+            # Categorical optimization
+            elif self._should_be_categorical(series):
+                self.schema_cache[col] = 'category'
+
+            else:
+                self.schema_cache[col] = 'object'
+
+        self.logger.debug(f"Schema inferred: {self.schema_cache}")
+
+    def _get_optimal_numeric_type(self, series: pd.Series) -> str:
+        """Find the smallest numeric type that fits the data"""
+        if series.dtype.kind in 'iu':  # integers
+            min_val, max_val = series.min(), series.max()
+            if min_val >= 0:  # unsigned
+                for dtype in ['uint8', 'uint16', 'uint32', 'uint64']:
+                    if max_val <= np.iinfo(getattr(np, dtype)).max:
+                        return dtype
+            else:  # signed
+                for dtype in ['int8', 'int16', 'int32', 'int64']:
+                    info = np.iinfo(getattr(np, dtype))
+                    if info.min <= min_val <= max_val <= info.max:
+                        return dtype
+        elif series.dtype.kind == 'f':  # floats
+            # Try float32 if precision allows
+            if (series.astype('float32') == series).all():
+                return 'float32'
+        return str(series.dtype)
+
+    def _is_datetime_column(self, series: pd.Series) -> bool:
+        """Check if series contains datetime data"""
+        if series.dtype != 'object':
+            return False
+
+        sample = series.head(min(10, len(series)))
+        successful_conversions = 0
+
+        for value in sample:
+            if pd.isna(value):
+                continue
+            try:
+                pd.to_datetime(str(value), errors='raise')
+                successful_conversions += 1
+            except:
+                pass
+
+        non_null_count = sample.notna().sum()
+        return (successful_conversions / non_null_count) > 0.8 if non_null_count > 0 else False
+
+    def _should_be_categorical(self, series: pd.Series) -> bool:
+        """Check if series should be categorical"""
+        unique_ratio = series.nunique() / len(series)
+        return unique_ratio < 0.5 and series.nunique() < 1000
+
+    def _optimize_dtypes(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply cached schema to DataFrame"""
+        for col, dtype in self.schema_cache.items():
+            if col in df.columns:
+                try:
+                    if dtype == 'category':
+                        df[col] = df[col].astype('category')
+                    elif dtype == 'datetime64[ns]':
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                    elif dtype.startswith(('int', 'uint', 'float')):
+                        df[col] = pd.to_numeric(df[col], errors='coerce').astype(dtype)
+                except Exception as e:
+                    self.logger.warning(f"Failed to optimize {col}: {e}")
+        return df
+
+    def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and validate data"""
+        # Remove completely empty rows
+        df = df.dropna(how='all')
+
+        # Fill NaN values appropriately
+        for col in df.columns:
+            if col in self.schema_cache:
+                dtype = self.schema_cache[col]
+                if dtype.startswith(('int', 'uint', 'float')):
+                    df[col] = df[col].fillna(0)
+                elif dtype == 'object':
+                    df[col] = df[col].fillna('')
+
+        return df
+
+
+# ===== PROGRESS TRACKING =====
+
+class ProgressTracker:
+    """Handles progress monitoring and statistics"""
+
+    def __init__(self, enable: bool = True, log_interval: int = 100, logger: logging.Logger = None):
+        self.enable = enable
+        self.log_interval = log_interval
+        self.logger = logger or logging.getLogger(__name__)
+
+        self.records_written = 0
+        self.batches_written = 0
+        self.bytes_written = 0
+        self.start_time = time.time()
+
+    def update(self, batch_size: int, bytes_written: int = 0):
+        """Update progress counters"""
+        if not self.enable:
+            return
+
+        self.records_written += batch_size
+        self.batches_written += 1
+        self.bytes_written += bytes_written
+
+        if self.batches_written % self.log_interval == 0:
+            self._log_progress()
+
+    def _log_progress(self):
+        """Log current progress"""
+        elapsed = time.time() - self.start_time
+        records_per_sec = self.records_written / elapsed if elapsed > 0 else 0
+        mb_per_sec = (self.bytes_written / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+
+        self.logger.info(
+            f"Progress: {self.records_written:,} records, "
+            f"{records_per_sec:.1f} records/sec, "
+            f"{mb_per_sec:.2f} MB/sec"
+        )
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current statistics"""
+        elapsed = time.time() - self.start_time
+        return {
+            'records_written': self.records_written,
+            'batches_written': self.batches_written,
+            'bytes_written': self.bytes_written,
+            'elapsed_seconds': elapsed,
+            'records_per_second': self.records_written / elapsed if elapsed > 0 else 0
+        }
+
 
 
 # ===== STRATEGY IMPLEMENTATIONS =====
