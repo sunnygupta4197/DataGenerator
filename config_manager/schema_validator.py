@@ -730,7 +730,7 @@ class SchemaValidator:
                 self._apply_correction(table_index, col_index, 'rule', rule, new_rule,
                                        'converted_human_format_to_python')
                 self._apply_correction(table_index, col_index, 'type', rule_type, 'str',
-                                       'converted_human_format_to_python')
+                                       'custom_format_for_data')
                 self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
                                      f"Format converted from '{format_field}' to '{converted_format}'")
 

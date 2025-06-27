@@ -220,10 +220,7 @@ class OptimizedDataGenerationEngine:
         for batch in self.parallel_generator.generate_streaming(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data,
-                enable_masking=enable_masking,
-                security_manager=self.security_manager,
-                sensitivity_map=sensitivity_map
+                foreign_key_data=foreign_key_data
         ):
             batch_count += 1
 
@@ -325,13 +322,16 @@ class OptimizedDataGenerationEngine:
         for batch in self.parallel_generator.generate_adaptive(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data,
-                enable_masking=enable_masking,
-                security_manager=self.security_manager,
-                sensitivity_map=sensitivity_map
+                foreign_key_data=foreign_key_data
         ):
             if isinstance(batch, list) and len(batch) > 0:
                 all_data.extend(batch)
+
+            if enable_masking:
+                sensitive_columns = [k for k, v in sensitivity_map.items() if v in ['PII', 'SENSITIVE']]
+                masking_operations = total_records * len(sensitive_columns)
+                self.generation_stats['security_operations'] += masking_operations
+                self.logger.info(f"🔒 Applied {masking_operations:,} masking operations during streaming")
 
         return all_data
 

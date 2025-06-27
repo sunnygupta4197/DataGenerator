@@ -91,7 +91,7 @@ class SecurityConfig:
 
     # Compliance settings
     compliance_profile: Optional[str] = None  # GDPR, HIPAA, PCI_DSS, SOX
-    auto_detect_pii: bool = True
+    auto_detect_pii: bool = False
     strict_mode: bool = False
     require_explicit_consent: bool = False
 

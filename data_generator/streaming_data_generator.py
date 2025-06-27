@@ -166,10 +166,7 @@ class ParallelDataGenerator:
 
     def generate_streaming(self, table_metadata: Dict[str, Any],
                            total_records: int,
-                           foreign_key_data: Dict[str, List] = None,
-                           enable_masking: bool = False,
-                           security_manager=None,
-                           sensitivity_map: Dict[str, str] = None) -> Iterator[List[Dict[str, Any]]]:
+                           foreign_key_data: Dict[str, List] = None) -> Iterator[List[Dict[str, Any]]]:
         """
         Generate data in streaming fashion using the sophisticated DataGenerator
         """
@@ -201,14 +198,6 @@ class ParallelDataGenerator:
                     batch_size=current_batch_size,
                     foreign_key_data=foreign_key_data
                 )
-
-                # 🔧 APPLY MASKING HERE - This was missing!
-                if enable_masking and security_manager and sensitivity_map:
-                    try:
-                        batch_data = security_manager.mask_sensitive_data(batch_data, sensitivity_map)
-                        self.logger.debug(f"Applied masking to batch {batch_idx + 1}")
-                    except Exception as e:
-                        self.logger.error(f"Error applying masking to batch {batch_idx + 1}: {e}")
 
                 # Store the batch in the DataGenerator for FK relationships
                 self.data_generator.store_generated_batch(table_name, batch_data)
@@ -443,10 +432,7 @@ class ParallelDataGenerator:
     def generate_streaming_parallel(self, table_metadata: Dict[str, Any],
                                     total_records: int,
                                     foreign_key_data: Dict[str, List] = None,
-                                    batch_size: int = None,
-                                    enable_masking: bool = False,
-                                    security_manager = None,
-                                    sensitivity_map: Dict[str, str] = None) -> Iterator[List[Dict[str, Any]]]:
+                                    batch_size: int = None) -> Iterator[List[Dict[str, Any]]]:
         """
         Combine streaming and parallel processing using the sophisticated DataGenerator
         """
@@ -479,14 +465,6 @@ class ParallelDataGenerator:
                     foreign_key_data=foreign_key_data
                 )
 
-                # 🔧 APPLY MASKING HERE - This was missing!
-                if enable_masking and security_manager and sensitivity_map:
-                    try:
-                        batch_data = security_manager.mask_sensitive_data(batch_data, sensitivity_map)
-                        self.logger.debug(f"Applied masking to hybrid batch {batch_idx + 1}")
-                    except Exception as e:
-                        self.logger.error(f"Error applying masking to hybrid batch {batch_idx + 1}: {e}")
-
                 # Store in DataGenerator for FK relationships
                 self.data_generator.store_generated_batch(table_name, batch_data)
 
@@ -518,10 +496,7 @@ class ParallelDataGenerator:
 
     def generate_adaptive(self, table_metadata: Dict[str, Any],
                           total_records: int,
-                          foreign_key_data: Dict[str, List] = None,
-                          enable_masking: bool = False,
-                          security_manager = None,
-                          sensitivity_map: Dict[str, str] = None) -> Iterator[List[Dict[str, Any]]]:
+                          foreign_key_data: Dict[str, List] = None) -> Iterator[List[Dict[str, Any]]]:
         """
         Adaptive generation that chooses optimal strategy using the sophisticated DataGenerator
         """
@@ -537,34 +512,20 @@ class ParallelDataGenerator:
             self.logger.info("Using parallel generation strategy")
             data = self.generate_parallel(table_metadata, total_records, foreign_key_data)
 
-            # Apply masking to complete dataset
-            if enable_masking and security_manager and sensitivity_map:
-                try:
-                    data = security_manager.mask_sensitive_data(data, sensitivity_map)
-                    self.logger.info("Applied masking to parallel-generated data")
-                except Exception as e:
-                    self.logger.error(f"Error applying masking to parallel data: {e}")
-
             yield data
 
         elif estimated_memory_mb <= available_memory_mb * 0.8:
             # Medium dataset - use streaming with parallel batches
             self.logger.info("Using streaming + parallel generation strategy")
             yield from self.generate_streaming_parallel(
-                table_metadata, total_records, foreign_key_data,
-                enable_masking=enable_masking,
-                security_manager=security_manager,
-                sensitivity_map=sensitivity_map
+                table_metadata, total_records, foreign_key_data
             )
 
         else:
             # Large dataset - use pure streaming
             self.logger.info("Using streaming generation strategy")
             yield from self.generate_streaming(
-                table_metadata, total_records, foreign_key_data,
-                enable_masking=enable_masking,
-                security_manager=security_manager,
-                sensitivity_map=sensitivity_map
+                table_metadata, total_records, foreign_key_data
             )
 
     def _estimate_memory_requirements(self, table_metadata: Dict[str, Any], total_records: int) -> float:

@@ -552,10 +552,7 @@ class OptimizedDataGenerationEngine:
         generated_data = list(self.parallel_generator.generate_adaptive(
             table_metadata=table_metadata,
             total_records=total_records,
-            foreign_key_data=foreign_key_data or {},
-            enable_masking=enable_masking,
-            security_manager=self.security_manager if enable_masking else None,
-            sensitivity_map=sensitivity_map
+            foreign_key_data=foreign_key_data or {}
         ))
 
         if generated_data and isinstance(generated_data[0], list):
@@ -563,6 +560,14 @@ class OptimizedDataGenerationEngine:
             for batch in generated_data:
                 flat_data.extend(batch)
             generated_data = flat_data
+
+        # 🔧 APPLY MASKING HERE - This was missing!
+        if enable_masking and self.security_manager and sensitivity_map:
+            try:
+                batch = self.security_manager.mask_sensitive_data(generated_data, sensitivity_map)
+                self.logger.debug(f"Applied masking to batch {total_records}")
+            except Exception as e:
+                self.logger.error(f"Error applying masking to batch {total_records}: {e}")
 
         return generated_data, self._extract_foreign_key_data_cached(generated_data, table_metadata)
 
@@ -606,10 +611,7 @@ class OptimizedDataGenerationEngine:
         for batch in self.parallel_generator.generate_streaming(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data,
-                enable_masking=enable_masking,
-                security_manager=self.security_manager if enable_masking else None,
-                sensitivity_map=sensitivity_map
+                foreign_key_data=foreign_key_data
         ):
             batch_count += 1
 
@@ -634,6 +636,14 @@ class OptimizedDataGenerationEngine:
                     getattr(self.config.validation, 'enable_anomaly_detection', False)):
                 anomalies = self._detect_anomalies_fast(batch, table_metadata)
                 anomalies_detected += anomalies.get('total_anomalies', 0)
+
+            # 🔧 APPLY MASKING HERE - This was missing!
+            if enable_masking and self.security_manager and sensitivity_map:
+                try:
+                    batch = self.security_manager.mask_sensitive_data(batch, sensitivity_map)
+                    self.logger.debug(f"Applied masking to batch {batch_count}")
+                except Exception as e:
+                    self.logger.error(f"Error applying masking to batch {batch_count}: {e}")
 
             # Keep sample
             if len(all_data) < 5000:
@@ -695,10 +705,8 @@ class OptimizedDataGenerationEngine:
         for batch in self.parallel_generator.generate_adaptive(
                 table_metadata=table_metadata,
                 total_records=total_records,
-                foreign_key_data=foreign_key_data,
-                enable_masking=enable_masking,
-                security_manager=self.security_manager if enable_masking else None,
-                sensitivity_map=sensitivity_map
+                foreign_key_data=foreign_key_data
+
         ):
             if isinstance(batch, list) and len(batch) > 0:
                 all_data.extend(batch)
@@ -713,6 +721,14 @@ class OptimizedDataGenerationEngine:
                     if getattr(self.config.validation, 'enable_anomaly_detection', False):
                         anomalies = self._detect_anomalies_fast(batch, table_metadata)
                         anomalies_detected += anomalies.get('total_anomalies', 0)
+
+                # 🔧 APPLY MASKING HERE - This was missing!
+                if enable_masking and self.security_manager and sensitivity_map:
+                    try:
+                        batch = self.security_manager.mask_sensitive_data(batch, sensitivity_map)
+                        self.logger.debug(f"Applied masking to batch {batch_count}")
+                    except Exception as e:
+                        self.logger.error(f"Error applying masking to batch {batch_count}: {e}")
 
         # Update statistics
         self.generation_stats['business_rules_violations'] += business_rule_violations
@@ -754,7 +770,7 @@ class OptimizedDataGenerationEngine:
             sensitivity_level = column.get('sensitivity', 'PUBLIC')
 
             # Auto-detect sensitivity
-            if sensitivity_level == 'PUBLIC':
+            if sensitivity_level == 'PUBLIC' and self.config.security.auto_detect_pii:
                 col_name_lower = col_name.lower()
                 if any(keyword in col_name_lower for keyword in ['email', 'phone', 'ssn', 'credit']):
                     sensitivity_level = 'PII'
@@ -917,7 +933,8 @@ class OptimizedDataGenerationEngine:
             for anomaly in anomaly_list[:5]:
                 severity = anomaly.get('severity', 'unknown')
                 anomaly_type = anomaly.get('type', 'unknown')
-                self.logger.warning(f"   - {anomaly_type} ({severity})")
+                column = anomaly.get('column', 'unknown')
+                self.logger.warning(f"   - {anomaly_type} in {column} ({severity})")
 
         self.generation_stats['anomalies_detected'] += anomalies.get('total_anomalies', 0)
 
@@ -1440,12 +1457,16 @@ class OptimizedDataGenerationOrchestrator:
             return
 
         table_name = table_metadata["table_name"]
+        schema = {}
+        for column in table_metadata["columns"]:
+            schema.update({column['name']: column['type']})
 
         try:
             with UnifiedWriterFactory.create_writer(
-                    table_name=table_name,
-                    config=self.config.output,
-                    logger=self.logger
+                table_name=table_name,
+                config=self.config.output,
+                logger=self.logger,
+                schema=schema
             ) as writer:
 
                 if len(data) <= 10000:
