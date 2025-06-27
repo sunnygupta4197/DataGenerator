@@ -138,9 +138,9 @@ class FixedWidthFormatter:
 class DataOptimizer:
     """Handles pandas data type optimization and cleaning"""
 
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger, schema: dict = None):
         self.logger = logger
-        self.schema_cache = {}
+        self.schema_cache = schema if schema is not None else {}
         self.datetime_formats = {}
 
     def optimize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -308,7 +308,6 @@ class ProgressTracker:
         }
 
 
-
 # ===== STRATEGY IMPLEMENTATIONS =====
 
 class CSVStrategy:
@@ -331,12 +330,16 @@ class CSVStrategy:
         """Write CSV header"""
         if getattr(config, 'include_header', True):
             import csv
+
+            formatter = FixedWidthFormatter(config)
+            formatted_headers = formatter.format_header_row(columns)
+
             writer = csv.writer(
                 file_handle,
                 delimiter=getattr(config, 'csv_delimiter', ','),
                 quotechar=getattr(config, 'csv_quotechar', '"')
             )
-            writer.writerow(columns)
+            writer.writerow(formatted_headers)
 
     def write_batch_impl(self, batch_df: pd.DataFrame, file_handle, config: OutputConfig) -> int:
         """Write CSV batch"""
@@ -869,7 +872,7 @@ class UnifiedWriter:
     Enhanced unified writer with comprehensive format support
     """
 
-    def __init__(self, file_path: str, config: OutputConfig, strategy, logger: logging.Logger = None):
+    def __init__(self, file_path: str, config: OutputConfig, strategy, logger: logging.Logger = None, schema: dict = None, **kwargs):
         self.file_path = file_path
         self.config = config
         self.strategy = strategy
@@ -880,7 +883,7 @@ class UnifiedWriter:
 
         # Initialize common components (safely)
         try:
-            self.optimizer = DataOptimizer(self.logger)
+            self.optimizer = DataOptimizer(self.logger, schema)
         except Exception:
             self.optimizer = None
 
@@ -1016,7 +1019,7 @@ class UnifiedWriterFactory:
 
     @classmethod
     def create_writer(cls, table_name: str, config: OutputConfig,
-                      compression: Optional[str] = None, logger: logging.Logger = None, **kwargs) -> UnifiedWriter:
+                      compression: Optional[str] = None, logger: logging.Logger = None, schema: dict = None, **kwargs) -> UnifiedWriter:
         """Create unified writer with appropriate strategy"""
 
         if logger is None:
@@ -1037,7 +1040,7 @@ class UnifiedWriterFactory:
                 config.table_name = table_name
 
             # Create unified writer
-            writer = UnifiedWriter(file_path, config, strategy, logger)
+            writer = UnifiedWriter(file_path, config, strategy, logger, schema)
 
             # Add compression wrapper if requested
             if compression:

@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
@@ -10,6 +10,7 @@ import tempfile
 import shutil
 from contextlib import contextmanager
 from .json_reader import JSONConfigReader
+from .schema_validator import SchemaValidator
 
 
 class Environment(Enum):
@@ -533,7 +534,6 @@ class OutputConfig:
     enable_progress: bool = True
     log_every_n_batches: int = 100
 
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def __post_init__(self):
@@ -569,8 +569,8 @@ class OutputConfig:
 
     def _cleanup_directory_tree(self, directory_path: str):
         """Delete directory and its parent directories if they are empty"""
+        current_dir = os.path.abspath(directory_path)
         try:
-            current_dir = os.path.abspath(directory_path)
             while current_dir and current_dir != os.path.dirname(current_dir):
                 if os.path.exists(current_dir):
                     if not os.listdir(current_dir):
@@ -1025,6 +1025,7 @@ class ConfigurationManager:
         self.config_cache = {}
         self.environment_configs = {}
         self.template_configs = {}
+        self.schema_validator = SchemaValidator()
 
         # Load default configurations
         self._load_default_configs()
@@ -1152,40 +1153,474 @@ class ConfigurationManager:
     # ===================== CONFIGURATION LOADING =====================
 
     def load_configuration(self, config_path: str,
-                           environment: str = None) -> GenerationConfig:
-        """Load configuration from file with environment override"""
+                           environment: str = None,
+                           # Command-line argument overrides
+                           rows: int = None,
+                           max_workers: int = None,
+                           max_memory: int = None,
+                           batch_size: int = None,
+                           output_format: str = None,
+                           output_dir: str = None,
+                           log_level: str = None,
+                           enable_streaming: bool = None,
+                           enable_parallel: bool = None,
+                           enable_masking: bool = None,
+                           enable_quality_analysis: bool = None,
+                           enable_encryption: bool = None,
+                           enable_all_features: bool = None,
+                           # AI specific overrides
+                           ai_enabled: bool = None,
+                           openai_enabled: bool = None,
+                           mistral_enabled: bool = None,
+                           ai_primary_provider: str = None,
+                           openai_model: str = None,
+                           mistral_model: str = None,
+                           # Additional overrides
+                           **kwargs) -> 'GenerationConfig':
+        """
+        Enhanced configuration loading with comprehensive argument override support
+
+        Args:
+            config_path: Path to configuration file
+            environment: Environment name for environment-specific overrides
+            rows: Override number of rows per table
+            max_workers: Override maximum worker threads/processes
+            max_memory: Override maximum memory limit in MB
+            batch_size: Override batch size for processing
+            output_format: Override output format (csv, json, parquet, etc.)
+            output_dir: Override output directory
+            log_level: Override logging level
+            enable_streaming: Override streaming enable/disable
+            enable_parallel: Override parallel processing enable/disable
+            enable_masking: Override data masking enable/disable
+            enable_quality_analysis: Override quality analysis enable/disable
+            enable_encryption: Override encryption enable/disable
+            enable_all_features: Enable all optional features
+            ai_enabled: Override AI integration enable/disable
+            openai_enabled: Override OpenAI enable/disable
+            mistral_enabled: Override Mistral AI enable/disable
+            ai_primary_provider: Override primary AI provider
+            openai_model: Override OpenAI model
+            mistral_model: Override Mistral model
+            **kwargs: Additional overrides
+        """
         config_path = Path(config_path)
 
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-        raw_config = self._load_json(config_path)
+        # Load raw configuration
+        raw_config, config_reader = self._load_json(config_path)
 
-        # Parse configuration
+        # Apply argument overrides BEFORE parsing
+        raw_config = self._apply_argument_overrides(
+            raw_config,
+            rows=rows,
+            max_workers=max_workers,
+            max_memory=max_memory,
+            batch_size=batch_size,
+            output_format=output_format,
+            output_dir=output_dir,
+            log_level=log_level,
+            enable_streaming=enable_streaming,
+            enable_parallel=enable_parallel,
+            enable_masking=enable_masking,
+            enable_quality_analysis=enable_quality_analysis,
+            enable_encryption=enable_encryption,
+            enable_all_features=enable_all_features,
+            ai_enabled=ai_enabled,
+            openai_enabled=openai_enabled,
+            mistral_enabled=mistral_enabled,
+            ai_primary_provider=ai_primary_provider,
+            openai_model=openai_model,
+            mistral_model=mistral_model,
+            **kwargs
+        )
+
+        raw_config = config_reader.validate_schema(raw_config)
+
+        # Parse configuration with overrides applied
         config = self._parse_config_dict(raw_config)
 
         # Apply environment-specific overrides
         if environment:
             config = self._apply_environment_overrides(config, environment)
 
-        # Apply environment variables
+        # Apply environment variables (lowest priority)
         config = self._apply_environment_variables(config)
 
-        # Validate configuration
-        self._validate_configuration(config)
+        # Comprehensive validation including capacity checks
+        self._validate_configuration_comprehensive(config, raw_config)
+
 
         # Cache configuration
-        cache_key = f"{config_path}:{environment or 'default'}"
+        cache_key = f"{config_path}:{environment or 'default'}:{hash(str(sorted(kwargs.items())))}"
         self.config_cache[cache_key] = config
 
         return config
 
-    def _load_json(self, config_path: Path) -> Dict[str, Any]:
+    def _apply_argument_overrides(self, raw_config: Dict[str, Any], **overrides) -> Dict[str, Any]:
+        """
+        Apply command-line argument overrides to raw configuration
+        This happens BEFORE parsing so validation can catch capacity issues
+        """
+        config = raw_config.copy()
+
+        # Track what was overridden for logging
+        applied_overrides = []
+
+        # Top-level overrides
+        if overrides.get('rows') is not None:
+            old_value = config.get('rows', 'not set')
+            config['rows'] = overrides['rows']
+            applied_overrides.append(f"rows: {old_value} → {overrides['rows']}")
+
+        if overrides.get('output_format') is not None:
+            if 'output' not in config:
+                config['output'] = {}
+            old_value = config['output'].get('format', 'not set')
+            config['output']['format'] = overrides['output_format']
+            applied_overrides.append(f"output.format: {old_value} → {overrides['output_format']}")
+
+        if overrides.get('log_level') is not None:
+            if 'logging' not in config:
+                config['logging'] = {}
+            old_value = config['logging'].get('level', 'not set')
+            config['logging']['level'] = overrides['log_level']
+            applied_overrides.append(f"logging.level: {old_value} → {overrides['log_level']}")
+
+        # Performance overrides
+        performance_overrides = {
+            'max_workers': overrides.get('max_workers'),
+            'max_memory_mb': overrides.get('max_memory'),
+            'batch_size': overrides.get('batch_size'),
+            'enable_streaming': overrides.get('enable_streaming'),
+            'enable_parallel': overrides.get('enable_parallel')
+        }
+
+        performance_updates = {}
+        for key, value in performance_overrides.items():
+            if value is not None:
+                if 'performance' not in config:
+                    config['performance'] = {}
+                old_value = config['performance'].get(key, 'not set')
+                config['performance'][key] = value
+                performance_updates[key] = f"{old_value} → {value}"
+
+        if performance_updates:
+            applied_overrides.extend([f"performance.{k}: {v}" for k, v in performance_updates.items()])
+
+        # Security overrides
+        security_overrides = {
+            'enable_data_masking': overrides.get('enable_masking'),
+            'enable_encryption': overrides.get('enable_encryption')
+        }
+
+        security_updates = {}
+        for key, value in security_overrides.items():
+            if value is not None:
+                if 'security' not in config:
+                    config['security'] = {}
+                old_value = config['security'].get(key, 'not set')
+                config['security'][key] = value
+                security_updates[key] = f"{old_value} → {value}"
+
+        if security_updates:
+            applied_overrides.extend([f"security.{k}: {v}" for k, v in security_updates.items()])
+
+        # Validation overrides
+        if overrides.get('enable_quality_analysis') is not None:
+            if 'validation' not in config:
+                config['validation'] = {}
+            old_value = config['validation'].get('enable_data_quality_analysis', 'not set')
+            config['validation']['enable_data_quality_analysis'] = overrides['enable_quality_analysis']
+            applied_overrides.append(
+                f"validation.enable_data_quality_analysis: {old_value} → {overrides['enable_quality_analysis']}")
+
+        # Output directory override
+        if overrides.get('output_dir') is not None:
+            if 'output' not in config:
+                config['output'] = {}
+            old_value = config['output'].get('directory', 'not set')
+            config['output']['directory'] = overrides['output_dir']
+            applied_overrides.append(f"output.directory: {old_value} → {overrides['output_dir']}")
+
+        # AI overrides
+        ai_updates = self._apply_ai_overrides(config, overrides)
+        applied_overrides.extend(ai_updates)
+
+        # Enable all features override
+        if overrides.get('enable_all_features'):
+            all_features_updates = self._enable_all_features(config)
+            applied_overrides.extend(all_features_updates)
+
+        # Log applied overrides
+        if applied_overrides:
+            self.logger.info("🔧 Applied command-line overrides:")
+            for override in applied_overrides:
+                self.logger.info(f"  - {override}")
+
+        return config
+
+    def _apply_ai_overrides(self, config: Dict[str, Any], overrides: Dict[str, Any]) -> List[str]:
+        """Apply AI-specific overrides"""
+        applied_overrides = []
+
+        # Initialize AI config if needed
+        if 'ai' not in config:
+            config['ai'] = {}
+
+        # AI primary provider override
+        if overrides.get('ai_primary_provider') is not None:
+            old_value = config['ai'].get('primary_provider', 'not set')
+            config['ai']['primary_provider'] = overrides['ai_primary_provider']
+            applied_overrides.append(f"ai.primary_provider: {old_value} → {overrides['ai_primary_provider']}")
+
+        # OpenAI overrides
+        if any(k in overrides for k in ['openai_enabled', 'openai_model']):
+            if 'openai' not in config['ai']:
+                config['ai']['openai'] = {}
+
+            if overrides.get('openai_enabled') is not None:
+                old_value = config['ai']['openai'].get('enabled', 'not set')
+                config['ai']['openai']['enabled'] = overrides['openai_enabled']
+                applied_overrides.append(f"ai.openai.enabled: {old_value} → {overrides['openai_enabled']}")
+
+            if overrides.get('openai_model') is not None:
+                old_value = config['ai']['openai'].get('model', 'not set')
+                config['ai']['openai']['model'] = overrides['openai_model']
+                applied_overrides.append(f"ai.openai.model: {old_value} → {overrides['openai_model']}")
+
+        # Mistral overrides
+        if any(k in overrides for k in ['mistral_enabled', 'mistral_model']):
+            if 'mistral' not in config['ai']:
+                config['ai']['mistral'] = {}
+
+            if overrides.get('mistral_enabled') is not None:
+                old_value = config['ai']['mistral'].get('enabled', 'not set')
+                config['ai']['mistral']['enabled'] = overrides['mistral_enabled']
+                applied_overrides.append(f"ai.mistral.enabled: {old_value} → {overrides['mistral_enabled']}")
+
+            if overrides.get('mistral_model') is not None:
+                old_value = config['ai']['mistral'].get('model', 'not set')
+                config['ai']['mistral']['model'] = overrides['mistral_model']
+                applied_overrides.append(f"ai.mistral.model: {old_value} → {overrides['mistral_model']}")
+
+        return applied_overrides
+
+    def _enable_all_features(self, config: Dict[str, Any]) -> List[str]:
+        """Enable all optional features"""
+        applied_overrides = []
+
+        # Performance features
+        if 'performance' not in config:
+            config['performance'] = {}
+
+        performance_features = {
+            'enable_streaming': True,
+            'enable_parallel': True
+        }
+
+        for key, value in performance_features.items():
+            old_value = config['performance'].get(key, 'not set')
+            config['performance'][key] = value
+            applied_overrides.append(f"performance.{key}: {old_value} → {value}")
+
+        # Security features
+        if 'security' not in config:
+            config['security'] = {}
+
+        security_features = {
+            'enable_data_masking': True,
+            'enable_encryption': True,
+            'audit_enabled': True
+        }
+
+        for key, value in security_features.items():
+            old_value = config['security'].get(key, 'not set')
+            config['security'][key] = value
+            applied_overrides.append(f"security.{key}: {old_value} → {value}")
+
+        # Validation features
+        if 'validation' not in config:
+            config['validation'] = {}
+
+        validation_features = {
+            'enable_data_quality_analysis': True,
+            'enable_business_rules': True,
+            'enable_anomaly_detection': True
+        }
+
+        for key, value in validation_features.items():
+            old_value = config['validation'].get(key, 'not set')
+            config['validation'][key] = value
+            applied_overrides.append(f"validation.{key}: {old_value} → {value}")
+
+        applied_overrides.append("🚀 All features enabled")
+        return applied_overrides
+
+    def _validate_configuration_comprehensive(self, config: 'GenerationConfig', raw_config: Dict[str, Any]):
+        """
+        Comprehensive validation including capacity checks
+        """
+        self.logger.info("🔍 Starting comprehensive configuration validation...")
+
+        # Stage 1: Basic Configuration Validation
+        basic_errors = self._validate_basic_configuration(config)
+        if basic_errors:
+            self._log_validation_errors("Basic Configuration", basic_errors)
+            raise ValueError(
+                f"Basic configuration validation failed:\n" + "\n".join(f"  - {error}" for error in basic_errors))
+
+        # Stage 2: Schema Structure and Capacity Validation
+        schema_errors, capacity_errors = self._validate_schema_and_capacity(config, raw_config)
+
+        if capacity_errors:
+            self._log_capacity_errors(capacity_errors, config)
+            raise ValueError(
+                f"CRITICAL: Schema capacity validation failed. Cannot generate data with current configuration.\n" +
+                "\n".join(f"  - {error}" for error in capacity_errors))
+
+        if schema_errors:
+            self.logger.warning("Schema validation issues found (non-critical):")
+            for error in schema_errors[:5]:  # Limit output
+                self.logger.warning(f"  - {error}")
+
+        self.logger.info("✅ Comprehensive configuration validation completed")
+
+    def _validate_basic_configuration(self, config: 'GenerationConfig') -> List[str]:
+        """Basic configuration validation"""
+        errors = []
+
+        if config.rows <= 0:
+            errors.append("Rows must be greater than 0")
+
+        if not config.tables:
+            errors.append("No tables defined in configuration")
+
+        if config.performance.max_workers <= 0:
+            errors.append("Max workers must be positive")
+
+        if config.performance.batch_size <= 0:
+            errors.append("Batch size must be positive")
+
+        if config.performance.max_memory_mb <= 0:
+            errors.append("Max memory must be positive")
+
+        return errors
+
+    def _validate_schema_and_capacity(self, config: 'GenerationConfig', raw_config: Dict[str, Any]) -> tuple:
+        """Enhanced schema validation with capacity checking"""
+        schema_errors = []
+        capacity_errors = []
+
+        try:
+            # Create schema structure for validator
+            schema_for_validation = {
+                'tables': config.tables,
+                'rows': config.rows
+            }
+
+            # Run comprehensive schema validation
+            errors, warnings, suggestions, critical_errors, corrected_schema = self.schema_validator.validate_schema(
+                schema_for_validation)
+
+            # Categorize results
+            schema_errors.extend(errors)
+            capacity_errors.extend(critical_errors)
+
+            # Log suggestions
+            if suggestions:
+                self.logger.info("💡 Schema suggestions:")
+                for suggestion in suggestions[:3]:
+                    self.logger.info(f"  - {suggestion}")
+
+        except Exception as e:
+            schema_errors.append(f"Schema validation error: {str(e)}")
+
+        return schema_errors, capacity_errors
+
+    def _log_capacity_errors(self, errors: List[str], config: 'GenerationConfig'):
+        """Log capacity errors with specific recommendations"""
+        self.logger.error("🚨 CRITICAL CAPACITY VALIDATION FAILED:")
+        self.logger.error(f"Cannot generate {config.rows:,} rows with current constraints:")
+
+        for error in errors:
+            self.logger.error(f"  - {error}")
+
+        self.logger.error("\n💡 QUICK FIXES:")
+        self.logger.error("  1. Reduce rows with: --rows 1000")
+        self.logger.error("  2. Or edit your JSON config to increase range limits")
+        self.logger.error("  3. Or use sequence rules for unlimited capacity")
+
+        # Show specific capacity analysis
+        self._show_capacity_analysis(config)
+
+    def _show_capacity_analysis(self, config: 'GenerationConfig'):
+        """Show detailed capacity analysis for troubleshooting"""
+        self.logger.error("\n📊 CAPACITY ANALYSIS:")
+
+        for table in config.tables:
+            table_name = table.get('table_name', 'unknown')
+
+            for column in table.get('columns', []):
+                column_name = column.get('name', 'unknown')
+                constraints = column.get('constraints', []) + column.get('constraint', [])
+
+                if 'PK' in constraints or 'unique' in constraints:
+                    capacity = self._calculate_column_capacity(column)
+                    if capacity and capacity < config.rows:
+                        self.logger.error(
+                            f"  ❌ {table_name}.{column_name}: {capacity:,} capacity < {config.rows:,} needed")
+                        self._suggest_capacity_fix(column, table_name, column_name, config.rows)
+
+    def _calculate_column_capacity(self, column: Dict[str, Any]) -> Optional[int]:
+        """Calculate maximum unique values a column can generate"""
+        rule = column.get('rule', {})
+
+        if isinstance(rule, dict):
+            rule_type = rule.get('type', '').lower()
+
+            if rule_type == 'range':
+                min_val = rule.get('min')
+                max_val = rule.get('max')
+                if min_val is not None and max_val is not None:
+                    return max_val - min_val + 1
+
+            elif rule_type == 'choice':
+                choices = rule.get('value', [])
+                if isinstance(choices, list):
+                    return len(choices)
+
+        return None
+
+    def _suggest_capacity_fix(self, column: Dict[str, Any], table_name: str, column_name: str, needed_rows: int):
+        """Suggest specific capacity fixes"""
+        rule = column.get('rule', {})
+
+        if isinstance(rule, dict):
+            rule_type = rule.get('type', '').lower()
+
+            if rule_type == 'range':
+                current_min = rule.get('min', 0)
+                suggested_max = current_min + needed_rows - 1
+                self.logger.error(f"      💡 Fix: Change max from {rule.get('max')} to {suggested_max}")
+
+            elif rule_type == 'choice':
+                self.logger.error(f"      💡 Fix: Add more choices or use sequence rule")
+
+    def _log_validation_errors(self, category: str, errors: List[str]):
+        """Log validation errors with proper formatting"""
+        self.logger.error(f"❌ {category} validation failed:")
+        for error in errors:
+            self.logger.error(f"  - {error}")
+
+    def _load_json(self, config_path: Path, rows: int = None) -> tuple[Any, JSONConfigReader]:
         """Load JSON configuration file"""
         try:
             config_reader = JSONConfigReader(config_path)
             config = config_reader.load_config()
-            return config_reader.validate_schema(config)
+            return config, config_reader
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON configuration: {e}")
 

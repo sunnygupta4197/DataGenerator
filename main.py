@@ -734,11 +734,15 @@ class OptimizedDataGenerationOrchestrator:
             return
 
         table_name = table_metadata["table_name"]
+        schema = {}
+        for column in table_metadata["columns"]:
+            schema.update({column['name']: column['type']})
         try:
             with UnifiedWriterFactory.create_writer(
-                    table_name=table_name,
-                    config=self.config.output,  # Uses format from config
-                    logger=self.logger
+                table_name=table_name,
+                config=self.config.output,  # Uses format from config
+                logger=self.logger,
+                schema=schema
             ) as writer:
                 # Write all data as a single batch
                 writer.write_batch(data)
@@ -755,13 +759,16 @@ class OptimizedDataGenerationOrchestrator:
 
         table_name = table_metadata["table_name"]
         batch_size = 10000
-
+        schema = {}
+        for column in table_metadata["columns"]:
+            schema.update({column['name']: column['type']})
         try:
             with UnifiedWriterFactory.create_writer(
-                    table_name=table_name,
-                    config=self.config.output,
-                    compression=getattr(self.config.output, 'compression', None),
-                    logger=self.logger
+                table_name=table_name,
+                config=self.config.output,
+                compression=getattr(self.config.output, 'compression', None),
+                logger=self.logger,
+                schema=schema
             ) as writer:
 
                 # Write in batches for large datasets
@@ -785,15 +792,19 @@ class OptimizedDataGenerationOrchestrator:
             return
 
         table_name = table_metadata["table_name"]
+        schema = {}
+        for column in table_metadata["columns"]:
+            schema.update({column['name']: column['type']})
 
         # Convert List[Dict] to DataFrame (legacy compatibility)
         df = pd.DataFrame(data)
 
         # Create unified writer with legacy-style batching
         with UnifiedWriterFactory.create_writer(
-                table_name=table_name,
-                config=self.config.output,
-                logger=self.logger
+            table_name=table_name,
+            config=self.config.output,
+            logger=self.logger,
+            schema=schema
         ) as writer:
 
             # Batch the DataFrame like legacy writers did
@@ -968,7 +979,7 @@ class OptimizedDataGenerationOrchestrator:
         self.logger.info("=" * 80)
 
 
-def main(config: GenerationConfig, total_records: int = None, output_dir: str = "./output") -> Dict[str, List]:
+def main(config: GenerationConfig, total_records: int = None) -> Dict[str, List]:
     """
     Main function using the enhanced parallel data generator with streaming support
     """
@@ -1001,7 +1012,7 @@ def main(config: GenerationConfig, total_records: int = None, output_dir: str = 
     logger.info(f"🔧 Features: {', '.join(features_enabled) if features_enabled else 'Basic'}")
 
     # Run enhanced data generation
-    return orchestrator.run_data_generation(actual_total_records, output_dir)
+    return orchestrator.run_data_generation(actual_total_records, config.output.directory)
 
 
 def setup_logging(config: GenerationConfig) -> logging.Logger:
@@ -1100,6 +1111,8 @@ Features:
                         help='Enable data quality analysis')
     parser.add_argument('--enable_masking', action='store_true',
                         help='Enable data masking for sensitive data')
+    parser.add_argument('--enable_encryption', action='store_true',
+                        help='Enable data masking for sensitive data')
     parser.add_argument('--enable_business_rules', action='store_true',
                         help='Enable business rule validation')
     parser.add_argument('--enable_anomaly_detection', action='store_true',
@@ -1157,6 +1170,8 @@ def apply_command_line_overrides(config: GenerationConfig, args):
         config.validation.enable_data_quality_analysis = True
     if args.enable_masking:
         config.security.enable_data_masking = True
+    if args.enable_encryption:
+        config.security.enable_encryption = True
 
     # Advanced features
     if args.enable_business_rules:
@@ -1217,7 +1232,24 @@ if __name__ == "__main__":
 
         # Load and configure
         config_manager = ConfigurationManager()
-        config = config_manager.load_configuration(args.config, args.environment)
+        config = config_manager.load_configuration(
+            config_path=args.config,
+            environment=getattr(args, 'environment', None),
+            # Pass all arguments as keyword arguments
+            rows=args.rows,
+            max_workers=args.max_workers,
+            max_memory=args.max_memory,
+            batch_size=args.batch_size,
+            output_format=args.format,
+            output_dir=args.output_dir,
+            log_level=args.log_level,
+            enable_streaming=args.enable_streaming,
+            enable_parallel=args.enable_parallel,
+            enable_masking=args.enable_masking,
+            enable_quality_analysis=args.enable_quality_analysis,
+            enable_encryption=args.enable_encryption,
+            enable_all_features=args.enable_all_features
+        )
 
         # Apply command line overrides
         apply_command_line_overrides(config, args)
@@ -1257,15 +1289,13 @@ if __name__ == "__main__":
 
         # Generate timestamp for output directory
         timestamp = start_time.strftime("%Y%m%d_%H%M%S")
-        output_directory = os.path.join(args.output_dir or './output/', timestamp)
 
         # Run enhanced data generation
         logger.info(f"🚀 Starting enhanced data generation...")
 
         generated_data = main(
             config=config,
-            total_records=config.rows,
-            output_dir=output_directory
+            total_records=config.rows
         )
 
         # Calculate and log execution time
@@ -1273,7 +1303,7 @@ if __name__ == "__main__":
         total_duration = (end_time - start_time).total_seconds()
 
         logger.info(f"⏱️ Total execution time: {total_duration:.2f} seconds")
-        logger.info(f"📁 Output saved to: {output_directory}")
+        logger.info(f"📁 Output saved to: {config.output.directory}")
 
         # Enhanced success message
         print("\n" + "=" * 80)
@@ -1286,7 +1316,7 @@ if __name__ == "__main__":
         print(f"🔒 Security ready: Data masking, encryption, and audit logging")
         print(f"📋 Business validated: Rule validation and anomaly detection")
         print(f"⚡ Performance profiled: Detailed performance monitoring")
-        print(f"📁 Files saved to: {output_directory}")
+        print(f"📁 Files saved to: {config.output.directory}")
         print(f"⏱️ Completed in: {total_duration:.2f} seconds ({end_time - start_time})")
         print("=" * 80)
 

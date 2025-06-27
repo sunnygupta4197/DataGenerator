@@ -257,7 +257,7 @@ class ValueGenerator:
         """Generate date within range with optional formatting"""
         start_date = rule.get("start", "1950-01-01")
         end_date = rule.get("end", datetime.now().strftime("%Y-%m-%d"))
-        date_format = rule.get("format", None)  # Custom format
+        date_format = rule.get("format", "%Y-%m-%d")  # Custom format
 
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d")

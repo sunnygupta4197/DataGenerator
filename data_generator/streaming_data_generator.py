@@ -182,7 +182,7 @@ class ParallelDataGenerator:
         table_name = table_metadata.get('table_name', 'unknown')
 
         # Initialize streaming writer if output path provided
-        writer = self._create_streaming_writer(table_name)
+        writer = self._create_streaming_writer(table_metadata)
         columns = [col['name'] for col in table_metadata.get('columns', [])]
         writer.write_header(columns)
 
@@ -241,13 +241,18 @@ class ParallelDataGenerator:
         """Set flag to indicate streaming was used (to avoid double writing)"""
         self.streaming_used = flag
 
-    def _create_streaming_writer(self, table_name) -> UnifiedWriter:
+    def _create_streaming_writer(self, table_metadata) -> UnifiedWriter:
         """Create appropriate streaming writer using WriterFactory"""
+        table_name = table_metadata.get('table_name', 'unknown')
+        schema = {}
+        for column in table_metadata["columns"]:
+            schema.update({column['name']: column['type']})
         try:
             return UnifiedWriterFactory.create_writer(
                 table_name=table_name,
                 config=self.output_config,
-                logger=self.logger
+                logger=self.logger,
+                schema=schema
             )
         except ValueError as e:
             self.logger.error(f"Failed to create writer: {e}")
@@ -261,7 +266,8 @@ class ParallelDataGenerator:
                 return UnifiedWriterFactory.create_writer(
                     table_name=table_name,
                     config=self.output_config,
-                    logger=self.logger
+                    logger=self.logger,
+                    schema=schema
                 )
             finally:
                 self.output_config.format = original_format
@@ -452,7 +458,7 @@ class ParallelDataGenerator:
         table_name = table_metadata.get('table_name', 'unknown')
 
         # Initialize streaming writer
-        writer = self._create_streaming_writer(table_name)
+        writer = self._create_streaming_writer(table_metadata)
         columns = [col['name'] for col in table_metadata.get('columns', [])]
         writer.write_header(columns)
 
