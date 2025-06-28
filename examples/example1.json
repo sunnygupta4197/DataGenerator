@@ -185,7 +185,7 @@
                     "parent_table": "address",
                     "parent_column": "address_id",
                     "child_column": "address_id",
-                    "relationship_type": "one_to_one",
+                    "relationship_type": "one_to_many",
                     "nullable": false
                 }
             ]

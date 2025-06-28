@@ -484,7 +484,7 @@ class PrefixSuffixValidator(BaseValidator):
         return core_value
 
 
-class UnifiedValidator:
+class Validator:
     """
     Unified validation system that consolidates all validation logic
     Eliminates code duplication and provides consistent validation interface
@@ -709,8 +709,7 @@ class UnifiedValidator:
 
         return len(errors) == 0, errors
 
-    def _validate_length_constraint(self, value: Any, length_constraint: Union[int, Dict[str, int]]) -> Tuple[
-        bool, str]:
+    def _validate_length_constraint(self, value: Any, length_constraint: Union[int, Dict[str, int]]) -> Tuple[bool, str]:
         """Validate length constraints"""
         if isinstance(length_constraint, int):
             return self.validators['length'].validate(value, min_length=length_constraint, max_length=length_constraint)
@@ -801,138 +800,3 @@ class UnifiedValidator:
             'cache_hits': 0,
             'validation_errors': 0
         }
-
-
-# ===================== FACTORY FOR BACKWARD COMPATIBILITY =====================
-
-def create_unified_validator(logger=None) -> UnifiedValidator:
-    """Factory function to create unified validator instance"""
-    return UnifiedValidator(logger=logger)
-
-
-# ===================== ENHANCED TESTING =====================
-
-if __name__ == "__main__":
-    print("=== UNIFIED VALIDATION SYSTEM TEST ===")
-
-    validator = UnifiedValidator()
-
-    # Test consolidation of validation logic
-    test_cases = [
-        # Email validation
-        {
-            'value': 'test@example.com',
-            'rule': 'email',
-            'expected': True
-        },
-        {
-            'value': 'test@example.com',
-            'rule': {'type': 'email', 'regex': r'.*@example\.com'},
-                                               'expected': True
-    },
-    # Phone validation
-    {
-        'value': '+1234567890',
-        'rule': {'type': 'phone_number', 'country': 'US'},
-        'expected': True
-    },
-        # Prefix/suffix validation
-    {
-        'value': 'PROD-1234-SKU',
-        'rule': {
-            'prefix': 'PROD-',
-            'suffix': '-SKU',
-            'type': 'range',
-            'min': 1000,
-            'max': 9999
-        },
-        'expected': True
-    },
-        # Range validation
-    {
-        'value': 150,
-        'rule': {'type': 'range', 'min': 100, 'max': 200},
-        'expected': True
-    },
-        # Choice validation
-    {
-        'value': 'GOLD',
-        'rule': {'type': 'choice', 'value': ['GOLD', 'SILVER', 'BRONZE']},
-        'expected': True
-    },
-        # UUID validation
-    {
-        'value': '123e4567-e89b-12d3-a456-426614174000',
-        'rule': 'uuid',
-        'expected': True
-    }
-    ]
-
-    print("Testing consolidated validation logic:")
-    print("-" * 50)
-
-    for i, test in enumerate(test_cases, 1):
-        is_valid, msg = validator.validate_value(test['value'], test['rule'])
-    status = "✅" if is_valid == test['expected'] else "❌"
-    print(f"{status} Test {i}: {test['value']} -> {is_valid} ({msg})")
-
-    # Test batch validation
-    print("\nTesting batch validation:")
-    print("-" * 50)
-
-    table_metadata = {
-        'columns': [
-            {
-                'name': 'email',
-                'type': 'str',
-                'nullable': False,
-                'rule': 'email'
-            },
-            {
-                'name': 'age',
-                'type': 'int',
-                'nullable': False,
-                'rule': {'type': 'range', 'min': 18, 'max': 100}
-            },
-            {
-                'name': 'product_id',
-                'type': 'str',
-                'nullable': False,
-                'rule': {
-                    'prefix': 'PROD-',
-                    'type': 'range',
-                    'min': 1000,
-                    'max': 9999
-                },
-                'length': 9
-            }
-        ]
-    }
-
-    test_records = [
-        {'email': 'john@example.com', 'age': 25, 'product_id': 'PROD-1234'},
-        {'email': 'jane@example.com', 'age': 30, 'product_id': 'PROD-5678'},
-        {'email': 'invalid-email', 'age': 15, 'product_id': 'PROD-999'},  # Multiple errors
-        {'email': 'bob@example.com', 'age': 45, 'product_id': 'PROD-7890'}
-    ]
-
-    batch_results = validator.validate_batch(test_records, table_metadata)
-    print(validator.get_validation_summary(batch_results))
-
-    # Test performance stats
-    print("\nPerformance Statistics:")
-    print("-" * 50)
-    stats = validator.get_performance_stats()
-    for key, value in stats.items():
-        print(f"{key}: {value}")
-
-    print("\n=== UNIFIED VALIDATION SYSTEM BENEFITS ===")
-    print("✅ Eliminated code duplication between validator.py and schema_validator.py")
-    print("✅ Consolidated regex patterns into single registry")
-    print("✅ Improved performance with compiled regex patterns and LRU caching")
-    print("✅ Thread-safe validation with proper error handling")
-    print("✅ Consistent validation interface across all components")
-    print("✅ Enhanced prefix/suffix validation with core value extraction")
-    print("✅ Comprehensive batch validation with detailed reporting")
-    print("✅ Performance monitoring and statistics tracking")
-    print("✅ Backward compatibility with existing validation methods")

@@ -108,7 +108,7 @@
           "type": "str",
           "nullable": true,
           "rule": {
-            "type": "phone_number",
+            "type": "regex",
             "regex": "^\\+?[0-9]{10,15}$",
             "country": "US"
           },
@@ -836,19 +836,6 @@
     "encrypt_fields": ["income", "credit_score", "cost"],
     "sensitive_data_patterns": ["ssn", "credit_card", "email", "phone", "income", "salary"],
     "encryption_key_file": "./security/encryption.key"
-  },
-
-  "openai": {
-    "enabled": true,
-    "api_key_env_var": "OPENAI_API_KEY",
-    "model": "gpt-3.5-turbo",
-    "max_tokens": 2000,
-    "temperature": 0.7,
-    "cache_size": 200,
-    "timeout_seconds": 60,
-    "retry_attempts": 5,
-    "fallback_enabled": true,
-    "cost_limit_usd": 100.0
   },
 
   "output": {

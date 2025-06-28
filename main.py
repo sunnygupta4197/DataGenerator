@@ -9,14 +9,14 @@ import sys
 
 import pandas as pd
 
-from constraint_manager.optimized_constraint_manager import OptimizedConstraintManager
-from validators.unified_validation_system import UnifiedValidator
+from constraint_manager.constraint_manager import ConstraintManager
+from validators.validation_system import Validator
 from data_generator.streaming_data_generator import ParallelDataGenerator, DataQualityAnalyzer, SecurityManager, \
     PerformanceProfiler
 from config_manager.config_manager import ConfigurationManager, GenerationConfig
 from data_generator.data_generator import DataGenerator
 
-from writers.unified_writer import UnifiedWriterFactory, UnifiedWriter
+from writers.writer import WriterFactory, Writer
 
 
 class OptimizedDataGenerationEngine:
@@ -30,13 +30,13 @@ class OptimizedDataGenerationEngine:
         self.logger = logger
 
         # Initialize core components with optimized versions
-        self.constraint_manager = OptimizedConstraintManager(
+        self.constraint_manager = ConstraintManager(
             logger=logger,
             max_memory_mb=config.performance.max_memory_mb,
             enable_parallel=config.performance.enable_parallel
         )
 
-        self.validator = UnifiedValidator(logger=logger)
+        self.validator = Validator(logger=logger)
 
         # Create the main DataGenerator instance with full sophisticated components
         self.data_generator = DataGenerator(config, config.locale, ai_config=config.ai, logger=logger)
@@ -738,7 +738,7 @@ class OptimizedDataGenerationOrchestrator:
         for column in table_metadata["columns"]:
             schema.update({column['name']: column['type']})
         try:
-            with UnifiedWriterFactory.create_writer(
+            with WriterFactory.create_writer(
                 table_name=table_name,
                 config=self.config.output,  # Uses format from config
                 logger=self.logger,
@@ -763,7 +763,7 @@ class OptimizedDataGenerationOrchestrator:
         for column in table_metadata["columns"]:
             schema.update({column['name']: column['type']})
         try:
-            with UnifiedWriterFactory.create_writer(
+            with WriterFactory.create_writer(
                 table_name=table_name,
                 config=self.config.output,
                 compression=getattr(self.config.output, 'compression', None),
@@ -800,7 +800,7 @@ class OptimizedDataGenerationOrchestrator:
         df = pd.DataFrame(data)
 
         # Create unified writer with legacy-style batching
-        with UnifiedWriterFactory.create_writer(
+        with WriterFactory.create_writer(
             table_name=table_name,
             config=self.config.output,
             logger=self.logger,

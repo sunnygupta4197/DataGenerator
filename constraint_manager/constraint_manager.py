@@ -117,7 +117,7 @@ class LRUConstraintCache:
             return len(self.cache)
 
 
-class OptimizedConstraintManager:
+class ConstraintManager:
     """
     Enhanced constraint manager with all methods required by DataGenerator and BatchGenerator
     """
@@ -772,7 +772,6 @@ class OptimizedConstraintManager:
         parent_table = fk_config["parent_table"]
         parent_column = fk_config["parent_column"]
         constraint_key = f"{parent_table}.{parent_column}"
-
         with self._lock:
             used_values = self._one_to_one_used[constraint_key]
 

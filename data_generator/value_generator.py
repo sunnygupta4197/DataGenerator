@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional
 import random
 
 # Import your existing modules
-from validators.unified_validation_system import UnifiedValidator
+from quality.validation_system import Validator
 from .ai_providers import AIProviderManager
 
 
@@ -407,7 +407,7 @@ class ValueGenerator:
         rule_regex = rule.get("regex")
         if not rule_regex or value is None:
             return value
-        validator = UnifiedValidator(logger=self.logger)
+        validator = Validator(logger=self.logger)
 
         max_attempts = 10
         attempts = 0

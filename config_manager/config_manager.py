@@ -494,6 +494,7 @@ class OutputConfig:
     """Output configuration"""
     format: str = "csv"
     directory: str = "./output"
+    report_directory = f'{directory}/reports'
     filename_template: str = "{table_name}_{timestamp}"
     compression: Optional[str] = None
     encoding: str = "utf-8"
@@ -549,10 +550,12 @@ class OutputConfig:
 
         # Create output directory if it doesn't exist
         self.directory = self.directory.format(timestamp=self.timestamp)
+        self.report_directory = f'{self.directory}/reports'
 
         if self.create_directory and not os.path.exists(self.directory):
             try:
                 os.makedirs(self.directory, exist_ok=True)
+                os.makedirs(self.report_directory, exist_ok=True)
             except Exception as e:
                 print(f"Warning: Could not create output directory {self.directory}: {e}")
                 
@@ -561,8 +564,9 @@ class OutputConfig:
         old_directory = getattr(self, 'directory', None)
 
         self.directory = f'{new_directory}/{self.timestamp}'
+        self.report_directory = f'{self.directory}/reports'
 
-        if cleanup_old and old_directory and os.path.exists(old_directory):
+        if cleanup_old and old_directory and os.path.exists(old_directory) and old_directory != new_directory:
             self._cleanup_directory_tree(old_directory)
 
         self._setup_output_directory()

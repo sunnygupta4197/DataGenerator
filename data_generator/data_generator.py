@@ -6,8 +6,8 @@ from typing import Dict, List, Any, Optional, Callable, Generator
 import pandas as pd
 
 from .value_generator import ValueGenerator
-from constraint_manager.optimized_constraint_manager import OptimizedConstraintManager
-from validators.unified_validation_system import UnifiedValidator
+from constraint_manager.constraint_manager import ConstraintManager
+from quality.validation_system import Validator
 
 try:
     import openai
@@ -73,7 +73,7 @@ class DataTypeConverter:
 class ForeignKeyManager:
     """Handles foreign key relationships - separated for clarity"""
 
-    def __init__(self, constraint_manager: OptimizedConstraintManager, converter: DataTypeConverter, logger: logging.Logger):
+    def __init__(self, constraint_manager: ConstraintManager, converter: DataTypeConverter, logger: logging.Logger):
         self.constraint_manager = constraint_manager
         self.converter = converter
         self.logger = logger
@@ -128,7 +128,7 @@ class BatchGenerator:
     """Handles batch generation logic - separated for clarity"""
 
     def __init__(self, value_generator: ValueGenerator, fk_manager: ForeignKeyManager,
-                 constraint_manager: OptimizedConstraintManager, converter: DataTypeConverter, logger: logging.Logger):
+                 constraint_manager: ConstraintManager, converter: DataTypeConverter, logger: logging.Logger):
         self.value_generator = value_generator
         self.fk_manager = fk_manager
         self.converter = converter
@@ -185,7 +185,6 @@ class BatchGenerator:
         """Get current record count for a table"""
         return self.table_record_counts.get(table_name, 0)
 
-    # Rest of the methods remain the same...
     def _prepare_fk_pools(self, foreign_keys: List[Dict], table_metadata: Dict,
                           batch_size: int, generated_data: Dict[str, pd.DataFrame],
                           foreign_key_data: Dict) -> tuple:
@@ -198,28 +197,38 @@ class BatchGenerator:
             relationship_type = self.constraint_manager.get_relationship_type(fk)
             expected_type = self._get_column_data_type(table_metadata, child_column)
 
-            if relationship_type in ["one_to_many", "one_to_one"]:
-                # Pre-calculate distribution
-                fk_values = self.fk_manager.get_fk_values_with_relationship(
-                    fk, generated_data, expected_type, batch_size
-                )
-                fk_distributions[child_column] = fk_values
-            else:
-                # Use regular FK pool
+            if relationship_type == "one_to_one":
                 available_values = self.fk_manager.get_fk_values(
                     fk["parent_table"], fk["parent_column"], generated_data,
                     expected_type, sample_size=10000
                 )
+                # Use the constraint manager's one-to-one handler
+                distributed_values = []
+                for i in range(batch_size):
+                    value = self.constraint_manager.handle_one_to_one_relationship(fk, available_values)
+                    if value is not None:
+                        distributed_values.append(value)
+                    else:
+                        break
+                fk_distributions[child_column] = distributed_values
 
-                # Add foreign_key_data if available
-                fk_key = f"{fk['parent_table']}.{fk['parent_column']}"
-                if fk_key in foreign_key_data:
-                    additional_values = [
-                        self.converter.convert_to_type(str(val), expected_type)
-                        for val in foreign_key_data[fk_key]
-                    ]
-                    available_values.extend(additional_values)
+            elif relationship_type == "one_to_many":
+                # Handle one-to-many: controlled distribution
+                available_values = self.fk_manager.get_fk_values(
+                    fk["parent_table"], fk["parent_column"], generated_data,
+                    expected_type, sample_size=10000
+                )
+                distributed_values = self.constraint_manager.handle_one_to_many_relationship(
+                    fk, available_values, batch_size
+                )
+                fk_distributions[child_column] = distributed_values
 
+            else:  # many_to_one (default)
+                # Regular FK pool for many-to-one
+                available_values = self.fk_manager.get_fk_values(
+                    fk["parent_table"], fk["parent_column"], generated_data,
+                    expected_type, sample_size=10000
+                )
                 fk_pools[child_column] = available_values or self._generate_fallback_fk_values(
                     expected_type, batch_size
                 )
@@ -349,20 +358,28 @@ class BatchGenerator:
         """Generate foreign key values"""
         for fk in foreign_keys:
             child_column = fk["child_column"]
+            relationship_type = self.constraint_manager.get_relationship_type(fk)
 
             if child_column in fk_distributions:
-                # Use pre-calculated distribution
-                if global_record_idx < len(fk_distributions[child_column]):
-                    row[child_column] = fk_distributions[child_column][global_record_idx]
-            elif child_column in fk_pools and fk_pools[child_column]:
-                # Use random selection
-                row[child_column] = random.choice(fk_pools[child_column])
+                distributed_values = fk_distributions[child_column]
 
-            # Handle nullable constraint
-            if fk.get("nullable", False):
-                col_def = {"name": child_column, "nullable": True}
-                if self.constraint_manager.should_generate_null(col_def):
+                # Use modulo to handle cases where batch might be larger than distribution
+                if distributed_values:
+                    distribution_idx = global_record_idx % len(distributed_values)
+                    row[child_column] = distributed_values[distribution_idx]
+                else:
                     row[child_column] = None
+
+            elif child_column in fk_pools:
+                # Many-to-one relationship - random selection from pool
+                available_values = fk_pools[child_column]
+                if available_values:
+                    row[child_column] = random.choice(available_values)
+                else:
+                    row[child_column] = None
+            else:
+                # No FK data available
+                row[child_column] = None
 
     def _generate_regular_columns(self, row: Dict, columns: List[Dict], table_name: str):
         """Generate regular column values"""
@@ -450,12 +467,12 @@ class DataGenerator:
 
         # Initialize components
         self.faker = Faker(locale) if locale else Faker()
-        self.validator = UnifiedValidator(logger=self.logger)
+        self.validator = Validator(logger=self.logger)
 
         performance_config = getattr(config, "performance_config", None)
         max_memory_mb = performance_config.get("max_memory_mb", 500) if performance_config else 500
         enable_parallel = getattr(performance_config, "enable_parallel", False) if performance_config else True
-        self.constraint_manager = OptimizedConstraintManager(logger=self.logger, max_memory_mb=max_memory_mb, enable_parallel=enable_parallel)
+        self.constraint_manager = ConstraintManager(logger=self.logger, max_memory_mb=max_memory_mb, enable_parallel=enable_parallel)
 
         # Initialize helper classes
         self.converter = DataTypeConverter(self.logger)
@@ -486,7 +503,7 @@ class DataGenerator:
         return self.batch_generator.generate_batch(
             table_metadata, batch_size, self._generated_data, foreign_key_data
         )
-    
+
     def generate_batch_iterator_optimized(self, table_metadata: Dict, batch_size: int, foreign_key_data: Dict = None) -> \
     Generator[list[dict], Any, None]:
         """Generate optimized batch of data"""
@@ -577,11 +594,11 @@ class DataGenerator:
 
     def get_openai_cache_statistics(self) -> Dict:
         """Get OpenAI cache statistics"""
-        return self.value_generator.get_cache_statistics()
+        return self.value_generator.get_ai_statistics()
 
     def clear_openai_cache(self, cache_key: str = None):
         """Clear OpenAI cache"""
-        self.value_generator.clear_openai_cache(cache_key)
+        self.value_generator.clear_ai_cache(cache_key)
 
     def set_openai_cache_size(self, size: int):
         """Set default cache size for OpenAI generation"""

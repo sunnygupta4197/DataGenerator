@@ -5,13 +5,9 @@ import time
 from typing import Dict, List, Any, Iterator, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-import pandas as pd
 import gc
 from contextlib import contextmanager
 import psutil
-import json
-
-from writers.unified_writer import UnifiedWriterFactory, UnifiedWriter
 
 
 @dataclass
@@ -94,7 +90,7 @@ class ParallelDataGenerator:
 
     def __init__(self, data_generator_instance,
                  max_workers: int = None, max_memory_mb: int = 1000,
-                 enable_streaming: bool = True, logger=None):
+                 enable_streaming: bool = True, performance_profiler=None, logger=None):
         """
         Initialize with the main DataGenerator instance to access all sophisticated components
 
@@ -110,6 +106,7 @@ class ParallelDataGenerator:
         self.output_config = data_generator_instance.config.output
         self.logger = logger or logging.getLogger(__name__)
         self.enable_streaming = enable_streaming
+        self.performance_profiler = performance_profiler if performance_profiler else PerformanceProfiler(logger=logger)
 
         # Parallel processing setup
         self.max_workers = max_workers or min(4, os.cpu_count())
@@ -170,96 +167,55 @@ class ParallelDataGenerator:
         """
         Generate data in streaming fashion using the sophisticated DataGenerator
         """
-        if foreign_key_data is None:
-            foreign_key_data = {}
+        with self.performance_profiler.profile("streaming_generation_total"):
 
-        batch_size = self.streaming_batch_size
-        total_batches = (total_records + batch_size - 1) // batch_size
+            # PROFILE SETUP
+            with self.performance_profiler.profile("streaming_setup"):
+                if foreign_key_data is None:
+                    foreign_key_data = {}
 
-        table_name = table_metadata.get('table_name', 'unknown')
+                batch_size = self.streaming_batch_size
+                total_batches = (total_records + batch_size - 1) // batch_size
 
-        # Initialize streaming writer if output path provided
-        writer = self._create_streaming_writer(table_metadata)
-        columns = [col['name'] for col in table_metadata.get('columns', [])]
-        writer.write_header(columns)
+                table_name = table_metadata.get('table_name', 'unknown')
 
-        start_time = time.time()
-
-        try:
+            start_time = time.time()
             for batch_idx in range(total_batches):
-                start_index = batch_idx * batch_size
-                current_batch_size = min(batch_size, total_records - start_index)
+                with self.performance_profiler.profile("streaming_batch_generation"):
 
-                self.logger.debug(f"Generating streaming batch {batch_idx + 1}/{total_batches}")
+                    start_index = batch_idx * batch_size
+                    current_batch_size = min(batch_size, total_records - start_index)
 
-                # Use the sophisticated DataGenerator batch generation
-                batch_data = self.data_generator.generate_batch_optimized(
-                    table_metadata=table_metadata,
-                    batch_size=current_batch_size,
-                    foreign_key_data=foreign_key_data
-                )
+                    self.logger.debug(f"Generating streaming batch {batch_idx + 1}/{total_batches}")
 
-                # Store the batch in the DataGenerator for FK relationships
-                self.data_generator.store_generated_batch(table_name, batch_data)
+                    # Use the sophisticated DataGenerator batch generation
+                    with self.performance_profiler.profile("batch_data_generation"):
+                        batch_data = self.data_generator.generate_batch_optimized(
+                            table_metadata=table_metadata,
+                            batch_size=current_batch_size,
+                            foreign_key_data=foreign_key_data
+                        )
+                    with self.performance_profiler.profile("fk_storage"):
+                        # Store the batch in the DataGenerator for FK relationships
+                        self.data_generator.store_generated_batch(table_name, batch_data)
 
                 # Update statistics
                 self.stats['total_records_generated'] += len(batch_data)
                 self.stats['batches_processed'] += 1
 
-                # Write to file if writer provided
-                if writer:
-                    writer.write_batch(batch_data)
-
                 # Yield batch for further processing
                 yield batch_data
+                with self.performance_profiler.profile("memory_management"):
+                    # Memory management
+                    if self.memory_monitor.get_memory_usage() > self.memory_monitor.max_memory_mb * 0.8:
+                        self._cleanup_memory()
 
-                # Memory management
-                if self.memory_monitor.get_memory_usage() > self.memory_monitor.max_memory_mb * 0.8:
-                    self._cleanup_memory()
-
-        finally:
-            # Finalize writer
-            if writer:
-                writer.write_footer()
-                writer.close()
-
-            # Update timing statistics
-            self.stats['generation_time'] = time.time() - start_time
+                # Update timing statistics
+                self.stats['generation_time'] = time.time() - start_time
 
     def set_streaming_flag(self, flag: bool):
         """Set flag to indicate streaming was used (to avoid double writing)"""
         self.streaming_used = flag
-
-    def _create_streaming_writer(self, table_metadata) -> UnifiedWriter:
-        """Create appropriate streaming writer using WriterFactory"""
-        table_name = table_metadata.get('table_name', 'unknown')
-        schema = {}
-        for column in table_metadata["columns"]:
-            schema.update({column['name']: column['type']})
-        try:
-            return UnifiedWriterFactory.create_writer(
-                table_name=table_name,
-                config=self.output_config,
-                logger=self.logger,
-                schema=schema
-            )
-        except ValueError as e:
-            self.logger.error(f"Failed to create writer: {e}")
-            self.logger.warning("Falling back to CSV format")
-
-            # Fallback to CSV
-            original_format = self.output_config.format
-            self.output_config.format = "csv"
-
-            try:
-                return UnifiedWriterFactory.create_writer(
-                    table_name=table_name,
-                    config=self.output_config,
-                    logger=self.logger,
-                    schema=schema
-                )
-            finally:
-                self.output_config.format = original_format
 
     # ===================== PARALLEL GENERATION =====================
 
@@ -270,55 +226,65 @@ class ParallelDataGenerator:
         """
         Generate data using parallel processing with the sophisticated DataGenerator
         """
-        if foreign_key_data is None:
-            foreign_key_data = {}
+        with self.performance_profiler.profile("parallel_generation_total"):
 
-        batch_size = self.default_batch_size // self.max_workers
-        total_batches = (total_records + batch_size - 1) // batch_size
+            # PROFILE SETUP
+            with self.performance_profiler.profile("parallel_setup"):
+                if foreign_key_data is None:
+                    foreign_key_data = {}
 
-        # For parallel generation, we need to be careful about FK relationships
-        # Generate FK pools upfront to share across workers
-        self._prepare_fk_pools_for_parallel_generation(table_metadata, foreign_key_data)
+                batch_size = self.default_batch_size // self.max_workers
+                total_batches = (total_records + batch_size - 1) // batch_size
 
-        # Create generation tasks
-        tasks = []
-        for batch_idx in range(total_batches):
-            start_index = batch_idx * batch_size
-            current_batch_size = min(batch_size, total_records - start_index)
+            with self.performance_profiler.profile("fk_preparation"):
 
-            task = GenerationTask(
-                table_metadata=table_metadata,
-                batch_size=current_batch_size,
-                start_index=start_index,
-                foreign_key_data=foreign_key_data,
-                task_id=f"batch_{batch_idx}"
-            )
-            tasks.append(task)
+                # For parallel generation, we need to be careful about FK relationships
+                # Generate FK pools upfront to share across workers
+                self._prepare_fk_pools_for_parallel_generation(table_metadata, foreign_key_data)
 
-        # Execute tasks in parallel
-        if use_processes and len(tasks) > 2:
-            # For process-based parallelism, we need to be more careful
-            # as the DataGenerator instance can't be shared directly
-            results = self._execute_process_parallel(tasks)
-        else:
-            # Thread-based parallelism can share the DataGenerator instance
-            results = self._execute_thread_parallel(tasks)
+            with self.performance_profiler.profile("task_creation"):
+                # Create generation tasks
+                tasks = []
+                for batch_idx in range(total_batches):
+                    start_index = batch_idx * batch_size
+                    current_batch_size = min(batch_size, total_records - start_index)
 
-        # Combine results
-        all_data = []
-        for result in sorted(results, key=lambda x: x.task_id):
-            if result.error:
-                self.logger.error(f"Task {result.task_id} failed: {result.error}")
-            else:
-                all_data.extend(result.data)
-                self.stats['parallel_tasks_completed'] += 1
+                    task = GenerationTask(
+                        table_metadata=table_metadata,
+                        batch_size=current_batch_size,
+                        start_index=start_index,
+                        foreign_key_data=foreign_key_data,
+                        task_id=f"batch_{batch_idx}"
+                    )
+                    tasks.append(task)
 
-        # Store all generated data in the DataGenerator for FK relationships
-        table_name = table_metadata.get('table_name', 'unknown')
-        self.data_generator.store_generated_batch(table_name, all_data)
+            with self.performance_profiler.profile("parallel_execution"):
+                # Execute tasks in parallel
+                if use_processes and len(tasks) > 2:
+                    # For process-based parallelism, we need to be more careful
+                    # as the DataGenerator instance can't be shared directly
+                    results = self._execute_process_parallel(tasks)
+                else:
+                    # Thread-based parallelism can share the DataGenerator instance
+                    results = self._execute_thread_parallel(tasks)
 
-        self.stats['total_records_generated'] += len(all_data)
-        return all_data
+            with self.performance_profiler.profile("result_combination"):
+                # Combine results
+                all_data = []
+                for result in sorted(results, key=lambda x: x.task_id):
+                    if result.error:
+                        self.logger.error(f"Task {result.task_id} failed: {result.error}")
+                    else:
+                        all_data.extend(result.data)
+                        self.stats['parallel_tasks_completed'] += 1
+
+            with self.performance_profiler.profile("fk_storage"):
+                # Store all generated data in the DataGenerator for FK relationships
+                table_name = table_metadata.get('table_name', 'unknown')
+                self.data_generator.store_generated_batch(table_name, all_data)
+
+                self.stats['total_records_generated'] += len(all_data)
+                return all_data
 
     def _prepare_fk_pools_for_parallel_generation(self, table_metadata: Dict[str, Any],
                                                   foreign_key_data: Dict[str, List]):
@@ -443,52 +409,36 @@ class ParallelDataGenerator:
             batch_size = self.streaming_batch_size * self.max_workers
         table_name = table_metadata.get('table_name', 'unknown')
 
-        # Initialize streaming writer
-        writer = self._create_streaming_writer(table_metadata)
-        columns = [col['name'] for col in table_metadata.get('columns', [])]
-        writer.write_header(columns)
-
         start_time = time.time()
         total_batches = (total_records + batch_size - 1) // batch_size
+        for batch_idx in range(total_batches):
+            start_index = batch_idx * batch_size
+            current_batch_size = min(batch_size, total_records - start_index)
 
-        try:
-            for batch_idx in range(total_batches):
-                start_index = batch_idx * batch_size
-                current_batch_size = min(batch_size, total_records - start_index)
+            self.logger.debug(f"Generating hybrid batch {batch_idx + 1}/{total_batches}")
 
-                self.logger.debug(f"Generating hybrid batch {batch_idx + 1}/{total_batches}")
+            # Generate batch using the sophisticated DataGenerator
+            batch_data = self.data_generator.generate_batch_optimized(
+                table_metadata=table_metadata,
+                batch_size=current_batch_size,
+                foreign_key_data=foreign_key_data
+            )
 
-                # Generate batch using the sophisticated DataGenerator
-                batch_data = self.data_generator.generate_batch_optimized(
-                    table_metadata=table_metadata,
-                    batch_size=current_batch_size,
-                    foreign_key_data=foreign_key_data
-                )
+            # Store in DataGenerator for FK relationships
+            self.data_generator.store_generated_batch(table_name, batch_data)
 
-                # Store in DataGenerator for FK relationships
-                self.data_generator.store_generated_batch(table_name, batch_data)
+            # Update statistics
+            self.stats['batches_processed'] += 1
 
-                # Write to file if writer provided
-                if writer:
-                    writer.write_batch(batch_data)
+            # Yield batch
+            yield batch_data
 
-                # Update statistics
-                self.stats['batches_processed'] += 1
+            # Clean up batch data to free memory
+            del batch_data
 
-                # Yield batch
-                yield batch_data
-
-                # Clean up batch data to free memory
-                del batch_data
-
-                # Memory management
-                if self.memory_monitor.get_memory_usage() > self.memory_monitor.max_memory_mb * 0.8:
-                    self._cleanup_memory()
-
-        finally:
-            if writer:
-                writer.write_footer()
-                writer.close()
+            # Memory management
+            if self.memory_monitor.get_memory_usage() > self.memory_monitor.max_memory_mb * 0.8:
+                self._cleanup_memory()
 
             self.stats['generation_time'] = time.time() - start_time
 
@@ -639,684 +589,6 @@ def execute_task_with_config(task: GenerationTask, generation_config: Dict[str, 
             generation_time=generation_time,
             error=str(e)
         )
-
-
-# ===================== DATA QUALITY ANALYZER =====================
-
-class DataQualityAnalyzer:
-    """
-    Analyze data quality and provide insights
-    """
-
-    def __init__(self, logger=None):
-        self.logger = logger or logging.getLogger(__name__)
-        self.analysis_cache = {}
-
-    def analyze_distribution(self, data: List[Dict[str, Any]],
-                             table_metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze statistical distribution of generated data"""
-        if not data:
-            return {}
-
-        df = pd.DataFrame(data)
-        analysis = {
-            'record_count': len(df),
-            'column_analysis': {},
-            'data_quality_score': 0.0,
-            'issues': []
-        }
-
-        columns = table_metadata.get('columns', [])
-        quality_scores = []
-
-        for column in columns:
-            column_name = column['name']
-
-            if column_name not in df.columns:
-                analysis['issues'].append(f"Missing column: {column_name}")
-                continue
-
-            col_analysis = self._analyze_column(df[column_name], column)
-            analysis['column_analysis'][column_name] = col_analysis
-            quality_scores.append(col_analysis['quality_score'])
-
-        # Calculate overall quality score
-        if quality_scores:
-            analysis['data_quality_score'] = sum(quality_scores) / len(quality_scores)
-
-        return analysis
-
-    def _analyze_column(self, series: pd.Series, column_metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze individual column quality"""
-        analysis = {
-            'null_count': series.isnull().sum(),
-            'null_percentage': (series.isnull().sum() / len(series)) * 100,
-            'unique_count': series.nunique(),
-            'uniqueness_ratio': series.nunique() / len(series),
-            'quality_score': 1.0,
-            'issues': []
-        }
-
-        # Data type specific analysis
-        column_type = column_metadata.get('type', 'str')
-
-        if column_type in ['int', 'integer', 'float', 'double']:
-            analysis.update(self._analyze_numeric_column(series))
-        elif column_type in ['str', 'string', 'text']:
-            analysis.update(self._analyze_string_column(series))
-        elif column_type in ['date', 'datetime']:
-            analysis.update(self._analyze_date_column(series))
-
-        # Check constraints
-        self._check_column_constraints(series, column_metadata, analysis)
-
-        return analysis
-
-    def _analyze_numeric_column(self, series: pd.Series) -> Dict[str, Any]:
-        """Analyze numeric column"""
-        numeric_series = pd.to_numeric(series, errors='coerce')
-
-        return {
-            'mean': numeric_series.mean(),
-            'median': numeric_series.median(),
-            'std': numeric_series.std(),
-            'min': numeric_series.min(),
-            'max': numeric_series.max(),
-            'outlier_count': self._count_outliers(numeric_series)
-        }
-
-    def _analyze_string_column(self, series: pd.Series) -> Dict[str, Any]:
-        """Analyze string column"""
-        str_series = series.astype(str)
-        lengths = str_series.str.len()
-
-        return {
-            'avg_length': lengths.mean(),
-            'min_length': lengths.min(),
-            'max_length': lengths.max(),
-            'empty_count': (str_series == '').sum(),
-            'common_patterns': self._find_common_patterns(str_series)
-        }
-
-    def _analyze_date_column(self, series: pd.Series) -> Dict[str, Any]:
-        """Analyze date column"""
-        try:
-            date_series = pd.to_datetime(series, errors='coerce')
-            return {
-                'earliest_date': date_series.min(),
-                'latest_date': date_series.max(),
-                'invalid_dates': date_series.isnull().sum()
-            }
-        except:
-            return {'invalid_dates': len(series)}
-
-    def _count_outliers(self, series: pd.Series) -> int:
-        """Count outliers using IQR method"""
-        if series.isnull().all():
-            return 0
-
-        Q1 = series.quantile(0.25)
-        Q3 = series.quantile(0.75)
-        IQR = Q3 - Q1
-
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-
-        outliers = series[(series < lower_bound) | (series > upper_bound)]
-        return len(outliers)
-
-    def _find_common_patterns(self, series: pd.Series) -> List[str]:
-        """Find common patterns in string data"""
-        # Simplified pattern detection
-        patterns = []
-
-        # Check for common formats
-        if series.str.contains(r'^\d+').any():
-            patterns.append('numeric_strings')
-
-        if series.str.contains(r'^[A-Z]+-\d+').any():
-            patterns.append('prefix_numeric')
-
-        if series.str.contains(r'@').any():
-            patterns.append('email_like')
-
-        return patterns
-
-    def _check_column_constraints(self, series: pd.Series,
-                                  column_metadata: Dict[str, Any],
-                                  analysis: Dict[str, Any]):
-        """Check if column data meets defined constraints"""
-        # Check nullable constraint
-        nullable = column_metadata.get('nullable', True)
-        if not nullable and analysis['null_count'] > 0:
-            analysis['issues'].append('Null values in non-nullable column')
-            analysis['quality_score'] -= 0.2
-
-        # Check unique constraint
-        constraints = column_metadata.get('constraints', [])
-        if 'unique' in constraints and analysis['uniqueness_ratio'] < 1.0:
-            analysis['issues'].append('Duplicate values in unique column')
-            analysis['quality_score'] -= 0.3
-
-        # Check length constraints
-        length_constraint = column_metadata.get('length')
-        if length_constraint:
-            self._check_length_constraint(series, length_constraint, analysis)
-
-    def _check_length_constraint(self, series: pd.Series,
-                                 length_constraint: Any,
-                                 analysis: Dict[str, Any]):
-        """Check length constraint compliance"""
-        str_series = series.astype(str)
-        lengths = str_series.str.len()
-
-        violations = 0
-
-        if isinstance(length_constraint, int):
-            violations = (lengths != length_constraint).sum()
-        elif isinstance(length_constraint, dict):
-            min_len = length_constraint.get('min', 0)
-            max_len = length_constraint.get('max', float('inf'))
-            violations = ((lengths < min_len) | (lengths > max_len)).sum()
-
-        if violations > 0:
-            violation_pct = (violations / len(series)) * 100
-            analysis['issues'].append(f'{violations} length constraint violations ({violation_pct:.1f}%)')
-            analysis['quality_score'] -= min(0.5, violation_pct / 100)
-
-    def detect_anomalies(self, data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Detect anomalies in generated data"""
-        if not data:
-            return {'anomalies': []}
-
-        df = pd.DataFrame(data)
-        anomalies = []
-
-        # Detect duplicate records
-        duplicates = df.duplicated()
-        if duplicates.any():
-            anomalies.append({
-                'type': 'duplicate_records',
-                'count': duplicates.sum(),
-                'severity': 'medium'
-            })
-
-        # Detect suspicious patterns
-        for column in df.columns:
-            col_anomalies = self._detect_column_anomalies(df[column], column)
-            anomalies.extend(col_anomalies)
-
-        return {'anomalies': anomalies}
-
-    def _detect_column_anomalies(self, series: pd.Series, column_name: str) -> List[Dict[str, Any]]:
-        """Detect anomalies in individual column"""
-        anomalies = []
-
-        # Check for excessive nulls
-        null_pct = (series.isnull().sum() / len(series)) * 100
-        if null_pct > 50:
-            anomalies.append({
-                'type': 'excessive_nulls',
-                'column': column_name,
-                'percentage': null_pct,
-                'severity': 'high'
-            })
-
-        # Check for low cardinality in large datasets
-        if len(series) > 1000 and series.nunique() < 10:
-            anomalies.append({
-                'type': 'low_cardinality',
-                'column': column_name,
-                'unique_count': series.nunique(),
-                'total_count': len(series),
-                'severity': 'medium'
-            })
-
-        return anomalies
-
-    def validate_business_rules(self, data: List[Dict[str, Any]],
-                                rules: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Validate complex business rules"""
-        if not data or not rules:
-            return {'violations': []}
-
-        df = pd.DataFrame(data)
-        violations = []
-
-        for rule in rules:
-            rule_violations = self._validate_single_rule(df, rule)
-            violations.extend(rule_violations)
-
-        return {
-            'violations': violations,
-            'total_violations': len(violations),
-            'compliance_rate': 1 - (len(violations) / len(data)) if data else 1.0
-        }
-
-    def _validate_single_rule(self, df: pd.DataFrame, rule: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Validate single business rule"""
-        violations = []
-        rule_type = rule.get('type')
-
-        try:
-            if rule_type == 'conditional':
-                # Example: If age > 65, then plan_type must be 'senior'
-                condition_column = rule.get('condition_column')
-                condition_operator = rule.get('condition_operator', '>')
-                condition_value = rule.get('condition_value')
-                requirement_column = rule.get('requirement_column')
-                requirement_value = rule.get('requirement_value')
-
-                if all([condition_column,
-                        requirement_column]) and condition_column in df.columns and requirement_column in df.columns:
-                    if condition_operator == '>':
-                        condition_mask = df[condition_column] > condition_value
-                    elif condition_operator == '<':
-                        condition_mask = df[condition_column] < condition_value
-                    elif condition_operator == '==':
-                        condition_mask = df[condition_column] == condition_value
-                    else:
-                        condition_mask = pd.Series([False] * len(df))
-
-                    violating_rows = df[condition_mask & (df[requirement_column] != requirement_value)]
-
-                    for idx, row in violating_rows.iterrows():
-                        violations.append({
-                            'rule_type': 'conditional',
-                            'rule_description': f"If {condition_column} {condition_operator} {condition_value}, then {requirement_column} must be {requirement_value}",
-                            'violation_row_index': idx,
-                            'actual_values': {condition_column: row[condition_column],
-                                              requirement_column: row[requirement_column]}
-                        })
-
-            elif rule_type == 'range_dependency':
-                # Example: If income > 100000, then credit_score must be > 700
-                income_column = rule.get('income_column', 'income')
-                score_column = rule.get('score_column', 'credit_score')
-                income_threshold = rule.get('income_threshold', 100000)
-                score_threshold = rule.get('score_threshold', 700)
-
-                if income_column in df.columns and score_column in df.columns:
-                    violating_rows = df[(df[income_column] > income_threshold) & (df[score_column] <= score_threshold)]
-
-                    for idx, row in violating_rows.iterrows():
-                        violations.append({
-                            'rule_type': 'range_dependency',
-                            'rule_description': f"If {income_column} > {income_threshold}, then {score_column} must be > {score_threshold}",
-                            'violation_row_index': idx,
-                            'actual_values': {income_column: row[income_column], score_column: row[score_column]}
-                        })
-
-            elif rule_type == 'mutual_exclusivity':
-                # Example: status cannot be both 'ACTIVE' and 'SUSPENDED'
-                column1 = rule.get('column1')
-                column2 = rule.get('column2')
-                value1 = rule.get('value1')
-                value2 = rule.get('value2')
-
-                if column1 in df.columns and column2 in df.columns:
-                    violating_rows = df[(df[column1] == value1) & (df[column2] == value2)]
-
-                    for idx, row in violating_rows.iterrows():
-                        violations.append({
-                            'rule_type': 'mutual_exclusivity',
-                            'rule_description': f"{column1} cannot be {value1} when {column2} is {value2}",
-                            'violation_row_index': idx,
-                            'actual_values': {column1: row[column1], column2: row[column2]}
-                        })
-
-        except Exception as e:
-            self.logger.error(f"Error validating business rule {rule_type}: {e}")
-
-        return violations
-
-
-# ===================== SECURITY MANAGER =====================
-
-class SecurityManager:
-    """
-    Comprehensive security management for sensitive data
-    """
-
-    def __init__(self, logger=None):
-        self.logger = logger or logging.getLogger(__name__)
-        self.encryption_key = None
-        self.masking_rules = {}
-        self.enable_masking = False
-        self.audit_trail = []
-
-    def set_encryption_key(self, key: bytes):
-        """Set encryption key for sensitive data"""
-        self.encryption_key = key
-
-    def add_masking_rule(self, column_pattern: str, masking_type: str):
-        """Add data masking rule"""
-        self.masking_rules[column_pattern] = masking_type
-
-    def mask_sensitive_data(self, data: List[Dict[str, Any]],
-                            sensitivity_map: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Apply data masking rules to sensitive data"""
-        if not self.enable_masking:
-            return data
-
-        masked_data = []
-        masked_fields_count = {}
-
-        for row in data:
-            masked_row = {}
-            for column, value in row.items():
-                sensitivity_level = sensitivity_map.get(column, 'PUBLIC')
-
-                if sensitivity_level in ['PII', 'SENSITIVE']:
-                    masked_row[column] = self._mask_value(value, column)
-                    masked_fields_count[column] = masked_fields_count.get(column, 0) + 1
-                else:
-                    masked_row[column] = value
-
-            masked_data.append(masked_row)
-
-        # Log masking activity
-        if masked_fields_count:
-            self.logger.info(f"Data masking applied: {masked_fields_count}")
-
-        return masked_data
-
-    def _mask_value(self, value: Any, column: str) -> Any:
-        """Apply masking to individual value"""
-        if value is None:
-            return value
-
-        str_value = str(value)
-
-        # Apply custom masking rules first
-        for pattern, masking_type in self.masking_rules.items():
-            if pattern.lower() in column.lower():
-                return self._apply_custom_masking(str_value, masking_type)
-
-        # Default masking rules
-        if '@' in str_value:
-            return self._mask_email(str_value)
-        elif str_value.replace('-', '').replace(' ', '').replace('(', '').replace(')', '').isdigit() and len(
-                str_value) >= 10:
-            return self._mask_phone(str_value)
-        elif 'name' in column.lower():
-            return self._mask_name(str_value)
-        elif 'ssn' in column.lower() or 'social' in column.lower():
-            return self._mask_ssn(str_value)
-        elif 'card' in column.lower() or 'credit' in column.lower():
-            return self._mask_credit_card(str_value)
-        else:
-            return self._mask_generic(str_value)
-
-    def _apply_custom_masking(self, value: str, masking_type: str) -> str:
-        """Apply custom masking based on type"""
-        if masking_type == 'full':
-            return '*' * len(value)
-        elif masking_type == 'partial':
-            return self._mask_generic(value)
-        elif masking_type == 'hash':
-            import hashlib
-            return hashlib.sha256(value.encode()).hexdigest()[:8]
-        else:
-            return self._mask_generic(value)
-
-    def _mask_email(self, email: str) -> str:
-        """Mask email address"""
-        if '@' not in email:
-            return email
-
-        local, domain = email.split('@', 1)
-        if len(local) > 2:
-            masked_local = local[0] + '*' * (len(local) - 2) + local[-1]
-        else:
-            masked_local = '*' * len(local)
-
-        return f"{masked_local}@{domain}"
-
-    def _mask_phone(self, phone: str) -> str:
-        """Mask phone number"""
-        digits = ''.join(c for c in phone if c.isdigit())
-        if len(digits) >= 10:
-            masked = digits[:3] + '*' * (len(digits) - 6) + digits[-3:]
-            return phone.replace(digits, masked)
-        return phone
-
-    def _mask_name(self, name: str) -> str:
-        """Mask name"""
-        if len(name) <= 1:
-            return name
-        return name[0] + '*' * (len(name) - 1)
-
-    def _mask_ssn(self, ssn: str) -> str:
-        """Mask SSN"""
-        digits = ''.join(c for c in ssn if c.isdigit())
-        if len(digits) == 9:
-            return f"***-**-{digits[-4:]}"
-        return '*' * len(ssn)
-
-    def _mask_credit_card(self, card: str) -> str:
-        """Mask credit card number"""
-        digits = ''.join(c for c in card if c.isdigit())
-        if len(digits) >= 13:
-            return f"****-****-****-{digits[-4:]}"
-        return '*' * len(card)
-
-    def _mask_generic(self, value: str) -> str:
-        """Generic masking"""
-        if len(value) <= 2:
-            return '*' * len(value)
-        return value[0] + '*' * (len(value) - 2) + value[-1]
-
-    def encrypt_sensitive_fields(self, data: List[Dict[str, Any]],
-                                 sensitive_fields: List[str]) -> List[Dict[str, Any]]:
-        """Encrypt sensitive data fields"""
-        if not self.encryption_key:
-            self.logger.warning("No encryption key set, skipping encryption")
-            return data
-
-        encrypted_data = []
-        encryption_count = 0
-
-        for row in data:
-            encrypted_row = {}
-            for column, value in row.items():
-                if column in sensitive_fields:
-                    encrypted_row[column] = self._encrypt_value(value)
-                    encryption_count += 1
-                else:
-                    encrypted_row[column] = value
-
-            encrypted_data.append(encrypted_row)
-
-        self.logger.info(f"Encrypted {encryption_count} field values")
-        return encrypted_data
-
-    def _encrypt_value(self, value: Any) -> Optional[str]:
-        """Encrypt individual value"""
-        if value is None:
-            return value
-
-        try:
-            # In production, use proper encryption libraries like cryptography
-            # This is a simplified example using base64 (NOT secure!)
-            import base64
-            import hashlib
-
-            str_value = str(value)
-
-            # Create a simple "encryption" (this is NOT secure!)
-            # In production, use proper AES encryption
-            key_hash = hashlib.sha256(self.encryption_key).digest()[:16]
-
-            # Simple XOR encryption (demonstration only)
-            encrypted_bytes = bytes([ord(c) ^ key_hash[i % len(key_hash)] for i, c in enumerate(str_value)])
-            encoded = base64.b64encode(encrypted_bytes).decode()
-
-            return f"ENC:{encoded}"
-
-        except Exception as e:
-            self.logger.error(f"Encryption failed: {e}")
-            return f"ENC_ERROR:{str(value)[:8]}***"
-
-    def audit_data_generation(self, generation_params: Dict[str, Any],
-                              records_count: int,
-                              sensitive_columns: List[str]) -> Dict[str, Any]:
-        """Create audit trail for data generation"""
-        from datetime import datetime
-        import uuid
-
-        audit_record = {
-            'audit_id': str(uuid.uuid4()),
-            'timestamp': datetime.now().isoformat(),
-            'event_type': 'data_generation',
-            'generation_params': generation_params,
-            'records_generated': records_count,
-            'sensitive_columns': sensitive_columns,
-            'user': os.getenv('USER', 'unknown'),
-            'hostname': os.getenv('HOSTNAME', 'unknown'),
-            'pid': os.getpid(),
-            'compliance_level': self._assess_compliance_level(generation_params),
-            'security_measures_applied': {
-                'masking_enabled': self.enable_masking,
-                'encryption_enabled': bool(self.encryption_key),
-                'custom_rules_count': len(self.masking_rules)
-            }
-        }
-
-        # Store in audit trail
-        self.audit_trail.append(audit_record)
-
-        # Log audit record
-        self.logger.info(f"Audit record created: {audit_record['audit_id']}")
-
-        return audit_record
-
-    def _assess_compliance_level(self, params: Dict[str, Any]) -> str:
-        """Assess compliance level of generation parameters"""
-        risk_indicators = []
-
-        # Check for PII-related terms
-        pii_terms = ['pii', 'personal', 'ssn', 'social', 'credit', 'email', 'phone', 'address']
-        sensitive_terms = ['sensitive', 'confidential', 'private', 'restricted']
-
-        for key, value in params.items():
-            str_value = str(value).lower()
-            if any(term in str_value for term in pii_terms):
-                risk_indicators.append('PII_DETECTED')
-            elif any(term in str_value for term in sensitive_terms):
-                risk_indicators.append('SENSITIVE_DETECTED')
-
-        # Assess overall risk
-        if 'PII_DETECTED' in risk_indicators:
-            return 'HIGH_RISK'
-        elif 'SENSITIVE_DETECTED' in risk_indicators:
-            return 'MEDIUM_RISK'
-        else:
-            return 'LOW_RISK'
-
-    def export_audit_trail(self, output_path: str = None) -> str:
-        """Export audit trail to file"""
-        if not output_path:
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = f"./audit_trail_{timestamp}.json"
-
-        try:
-            with open(output_path, 'w') as f:
-                json.dump(self.audit_trail, f, indent=2, default=str)
-
-            self.logger.info(f"Audit trail exported to: {output_path}")
-            return output_path
-
-        except Exception as e:
-            self.logger.error(f"Failed to export audit trail: {e}")
-            raise
-
-    def validate_compliance(self, data: List[Dict[str, Any]],
-                            compliance_rules: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate data against compliance rules"""
-        compliance_report = {
-            'timestamp': time.time(),
-            'total_records': len(data),
-            'violations': [],
-            'compliance_score': 1.0,
-            'rules_checked': len(compliance_rules)
-        }
-
-        if not data:
-            return compliance_report
-
-        df = pd.DataFrame(data)
-
-        for rule_name, rule_config in compliance_rules.items():
-            try:
-                violations = self._check_compliance_rule(df, rule_name, rule_config)
-                compliance_report['violations'].extend(violations)
-            except Exception as e:
-                self.logger.error(f"Error checking compliance rule {rule_name}: {e}")
-
-        # Calculate compliance score
-        if compliance_report['violations']:
-            violation_rate = len(compliance_report['violations']) / len(data)
-            compliance_report['compliance_score'] = max(0.0, 1.0 - violation_rate)
-
-        return compliance_report
-
-    def _check_compliance_rule(self, df: pd.DataFrame, rule_name: str,
-                               rule_config: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Check individual compliance rule"""
-        violations = []
-        rule_type = rule_config.get('type')
-
-        if rule_type == 'no_real_pii':
-            # Check that no real PII patterns exist
-            pii_patterns = rule_config.get('patterns', [])
-            for pattern in pii_patterns:
-                for column in df.columns:
-                    if df[column].dtype == 'object':  # String columns
-                        matches = df[column].str.contains(pattern, regex=True, na=False)
-                        if matches.any():
-                            for idx in df[matches].index:
-                                violations.append({
-                                    'rule': rule_name,
-                                    'type': 'real_pii_detected',
-                                    'column': column,
-                                    'row_index': idx,
-                                    'pattern': pattern
-                                })
-
-        elif rule_type == 'data_minimization':
-            # Check that only necessary columns are present
-            allowed_columns = set(rule_config.get('allowed_columns', []))
-            actual_columns = set(df.columns)
-            unauthorized_columns = actual_columns - allowed_columns
-
-            if unauthorized_columns:
-                violations.append({
-                    'rule': rule_name,
-                    'type': 'unauthorized_columns',
-                    'columns': list(unauthorized_columns)
-                })
-
-        elif rule_type == 'anonymization_check':
-            # Check that sensitive data is properly anonymized
-            sensitive_columns = rule_config.get('sensitive_columns', [])
-            for column in sensitive_columns:
-                if column in df.columns:
-                    # Check for patterns that suggest real data
-                    real_patterns = rule_config.get('real_data_patterns', [])
-                    for pattern in real_patterns:
-                        matches = df[column].astype(str).str.contains(pattern, regex=True, na=False)
-                        if matches.any():
-                            violations.append({
-                                'rule': rule_name,
-                                'type': 'insufficient_anonymization',
-                                'column': column,
-                                'pattern': pattern,
-                                'match_count': matches.sum()
-                            })
-
-        return violations
 
 
 # ===================== PERFORMANCE PROFILER =====================

@@ -867,7 +867,7 @@ class CompressionWrapper:
 
 # ===== UNIFIED WRITER (Enhanced) =====
 
-class UnifiedWriter:
+class Writer:
     """
     Enhanced unified writer with comprehensive format support
     """
@@ -1012,14 +1012,14 @@ class UnifiedWriter:
 
 # ===== COMPLETE FACTORY =====
 
-class UnifiedWriterFactory:
+class WriterFactory:
     """
     Complete factory supporting all formats with compression
     """
 
     @classmethod
     def create_writer(cls, table_name: str, config: OutputConfig,
-                      compression: Optional[str] = None, logger: logging.Logger = None, schema: dict = None, **kwargs) -> UnifiedWriter:
+                      compression: Optional[str] = None, logger: logging.Logger = None, schema: dict = None, **kwargs) -> Writer:
         """Create unified writer with appropriate strategy"""
 
         if logger is None:
@@ -1040,7 +1040,7 @@ class UnifiedWriterFactory:
                 config.table_name = table_name
 
             # Create unified writer
-            writer = UnifiedWriter(file_path, config, strategy, logger, schema)
+            writer = Writer(file_path, config, strategy, logger, schema)
 
             # Add compression wrapper if requested
             if compression:
@@ -1060,7 +1060,7 @@ class UnifiedWriterFactory:
                 config.format = 'csv'
                 file_path = config.get_output_path(table_name)
                 strategy = CSVStrategy()
-                writer = UnifiedWriter(file_path, config, strategy, logger)
+                writer = Writer(file_path, config, strategy, logger)
                 logger.info(f"Created fallback CSV writer for {table_name}")
                 return writer
             except Exception as fallback_error:
@@ -1126,7 +1126,7 @@ class UnifiedWriterFactory:
 # ===== ADVANCED FEATURES =====
 
 def create_multi_format_writer(table_name: str, config: OutputConfig,
-                               formats: List[str], logger: logging.Logger = None) -> List[UnifiedWriter]:
+                               formats: List[str], logger: logging.Logger = None) -> List[Writer]:
     """Create multiple writers for the same data in different formats"""
     writers = []
     original_format = config.format
@@ -1134,7 +1134,7 @@ def create_multi_format_writer(table_name: str, config: OutputConfig,
     for fmt in formats:
         try:
             config.format = fmt
-            writer = UnifiedWriterFactory.create_writer(f"{table_name}_{fmt}", config, logger=logger)
+            writer = WriterFactory.create_writer(f"{table_name}_{fmt}", config, logger=logger)
             writers.append(writer)
         except Exception as e:
             if logger:
@@ -1146,9 +1146,9 @@ def create_multi_format_writer(table_name: str, config: OutputConfig,
 
 
 def create_compressed_writer(table_name: str, config: OutputConfig,
-                            compression: str = 'gzip', logger: logging.Logger = None) -> UnifiedWriter:
+                            compression: str = 'gzip', logger: logging.Logger = None) -> Writer:
     """Create writer with compression"""
-    return UnifiedWriterFactory.create_writer(
+    return WriterFactory.create_writer(
         table_name=table_name,
         config=config,
         compression=compression,
@@ -1207,7 +1207,7 @@ def test_all_formats():
 
     # Test results
     results = {}
-    formats = UnifiedWriterFactory.list_supported_formats()
+    formats = WriterFactory.list_supported_formats()
 
     print("🧪 TESTING ALL FORMATS")
     print("=" * 40)
@@ -1216,7 +1216,7 @@ def test_all_formats():
         try:
             config.format = fmt
 
-            with UnifiedWriterFactory.create_writer(f'test_{fmt}', config) as writer:
+            with WriterFactory.create_writer(f'test_{fmt}', config) as writer:
                 writer.write_batch(test_data)
 
             results[fmt] = "✅ SUCCESS"
@@ -1242,7 +1242,7 @@ def test_compression():
     config.format = 'csv'
     config.enable_progress = False
 
-    compressions = UnifiedWriterFactory.list_compression_formats()
+    compressions = WriterFactory.list_compression_formats()
     results = {}
 
     print("\n🗜️ TESTING COMPRESSION")
@@ -1250,7 +1250,7 @@ def test_compression():
 
     for compression in compressions:
         try:
-            with UnifiedWriterFactory.create_writer(
+            with WriterFactory.create_writer(
                 f'test_compressed_{compression}',
                 config,
                 compression=compression
@@ -1315,7 +1315,7 @@ def demo_advanced_features():
     print("4. SQL generation:")
     try:
         config.format = 'sql'
-        with UnifiedWriterFactory.create_writer('demo_sql', config) as writer:
+        with WriterFactory.create_writer('demo_sql', config) as writer:
             writer.write_batch(sample_data)
         print("   ✅ Generated SQL INSERT statements")
     except Exception as e:
@@ -1342,14 +1342,14 @@ def example_basic_usage():
     # Basic CSV
     config = OutputConfig()
     config.format = 'csv'
-    with UnifiedWriterFactory.create_writer('employees', config) as writer:
+    with WriterFactory.create_writer('employees', config) as writer:
         writer.write_batch(data)
     print("✅ CSV: employees.csv")
 
     # JSON with formatting
     config.format = 'json'
     config.json_indent = 2
-    with UnifiedWriterFactory.create_writer('employees', config) as writer:
+    with WriterFactory.create_writer('employees', config) as writer:
         writer.write_batch(data)
     print("✅ JSON: employees.json")
 
@@ -1357,13 +1357,13 @@ def example_basic_usage():
     config.format = 'fixed'
     config.enable_fixed_width = True
     config.column_widths = {'id': 5, 'name': 15, 'department': 12, 'salary': 10}
-    with UnifiedWriterFactory.create_writer('employees', config) as writer:
+    with WriterFactory.create_writer('employees', config) as writer:
         writer.write_batch(data)
     print("✅ Fixed-width: employees.txt")
 
     # Compressed JSONL
     config.format = 'jsonl'
-    with UnifiedWriterFactory.create_writer('employees', config, compression='gzip') as writer:
+    with WriterFactory.create_writer('employees', config, compression='gzip') as writer:
         writer.write_batch(data)
     print("✅ Compressed JSONL: employees.jsonl.gz")
 
@@ -1380,7 +1380,7 @@ def example_streaming_usage():
     config.format = 'csv'
 
     # This is exactly the same as your existing streaming code!
-    writer = UnifiedWriterFactory.create_writer('streaming_demo', config)
+    writer = WriterFactory.create_writer('streaming_demo', config)
 
     columns = ['batch_id', 'record_id', 'value']
     writer.write_header(columns)
@@ -1406,11 +1406,11 @@ if __name__ == "__main__":
     print("=" * 50)
 
     print("📋 SUPPORTED FORMATS:")
-    formats = UnifiedWriterFactory.list_supported_formats()
+    formats = WriterFactory.list_supported_formats()
     for fmt in formats:
         print(f"  • {fmt}")
 
-    print(f"\n🗜️ COMPRESSION: {', '.join(UnifiedWriterFactory.list_compression_formats())}")
+    print(f"\n🗜️ COMPRESSION: {', '.join(WriterFactory.list_compression_formats())}")
 
     # Run tests
     format_results = test_all_formats()

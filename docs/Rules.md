@@ -417,8 +417,8 @@ graph TD
    ```python
    engine = OptimizedDataGenerationEngine(config, logger)
    # Initializes:
-   # - OptimizedConstraintManager
-   # - UnifiedValidator
+   # - ConstraintManager
+   # - Validator
    # - DataGenerator with sophisticated components
    # - ParallelDataGenerator
    # - DataQualityAnalyzer

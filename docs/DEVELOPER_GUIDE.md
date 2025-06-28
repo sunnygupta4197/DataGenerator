@@ -35,7 +35,7 @@ memory_monitor.start_monitoring()
 
 #### 4. **Template Method Pattern** - Validation Pipeline
 ```python
-# UnifiedValidator with extensible validation pipeline
+# Validator with extensible validation pipeline
 def validate_value(self, value, rule, data_type):
     if isinstance(rule, str):
         return self._validate_string_rule(value, rule)
