@@ -102,7 +102,7 @@ jobs:
           "
 
       - name: Run DataGenerator
-        run: python main.py -c input.json -r ${{ github.event.inputs.rows }} --enable_all_features --output_dir output_files -f csv -w ${{ github.event.inputs.max_workers }} -m ${{ github.event.inputs.max_memory_mb }}
+        run: python optimized_main.py -c input.json -r ${{ github.event.inputs.rows }} --enable_all_features --output_dir output_files -f csv -w ${{ github.event.inputs.max_workers }} -m ${{ github.event.inputs.max_memory_mb }}
 
       - name: Upload output folder
         uses: actions/upload-artifact@v4
