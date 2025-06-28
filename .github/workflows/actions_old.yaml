@@ -39,6 +39,11 @@ on:
         required: false
         type: boolean
         default: true
+      enable_slack_notifications:
+        description: '📱 Enable Slack notifications'
+        required: false
+        type: boolean
+        default: false
       enable_issue_comments:
         description: '💬 Enable issue comment notifications'
         required: false
@@ -54,13 +59,27 @@ on:
         required: false
         type: boolean
         default: false
+      enable_discord_notifications:
+        description: '🎮 Enable Discord notifications'
+        required: false
+        type: boolean
+        default: false
 
       # Notification configuration
+      slack_webhook_url:
+        description: 'Slack webhook URL (if Slack enabled)'
+        required: false
+      discord_webhook_url:
+        description: 'Discord webhook URL (if Discord enabled)'
+        required: false
       custom_webhook_url:
         description: 'Custom webhook URL (if custom webhook enabled)'
         required: false
       email_address:
         description: 'Email address for notifications (if email enabled)'
+        required: false
+      notification_issue_number:
+        description: 'Issue number for comments (if issue comments enabled, leave empty to auto-create)'
         required: false
 
   # Issue-based file upload trigger
@@ -97,9 +116,11 @@ jobs:
           echo "🚀 DataGenerator workflow starting with multiple notifications..."
           echo "📊 Notification methods enabled:"
           echo "  - Workflow Summary: ${{ github.event.inputs.enable_workflow_summary }}"
+          echo "  - Slack: ${{ github.event.inputs.enable_slack_notifications }}"
           echo "  - Issue Comments: ${{ github.event.inputs.enable_issue_comments }}"
           echo "  - Email Prep: ${{ github.event.inputs.enable_email_prep }}"
           echo "  - Custom Webhook: ${{ github.event.inputs.enable_webhook_notifications }}"
+          echo "  - Discord: ${{ github.event.inputs.enable_discord_notifications }}"
           
           # Set outputs for all notification methods
           echo "start_time=$(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_OUTPUT
@@ -109,9 +130,11 @@ jobs:
           # Create notification summary
           METHODS=""
           [ "${{ github.event.inputs.enable_workflow_summary }}" = "true" ] && METHODS="$METHODS📋 Summary "
+          [ "${{ github.event.inputs.enable_slack_notifications }}" = "true" ] && METHODS="$METHODS📱 Slack "
           [ "${{ github.event.inputs.enable_issue_comments }}" = "true" ] && METHODS="$METHODS💬 Issues "
           [ "${{ github.event.inputs.enable_email_prep }}" = "true" ] && METHODS="$METHODS📧 Email "
           [ "${{ github.event.inputs.enable_webhook_notifications }}" = "true" ] && METHODS="$METHODS🔗 Webhook "
+          [ "${{ github.event.inputs.enable_discord_notifications }}" = "true" ] && METHODS="$METHODS🎮 Discord "
           
           echo "notification_methods=$METHODS" >> $GITHUB_OUTPUT
 
@@ -141,9 +164,11 @@ jobs:
           
           ## 🔔 Active Notification Channels
           - ${{ github.event.inputs.enable_workflow_summary == 'true' && '✅' || '❌' }} **Workflow Summary** - Rich dashboard in Actions
+          - ${{ github.event.inputs.enable_slack_notifications == 'true' && '✅' || '❌' }} **Slack** - Team notifications with buttons
           - ${{ github.event.inputs.enable_issue_comments == 'true' && '✅' || '❌' }} **Issue Comments** - GitHub issue updates
           - ${{ github.event.inputs.enable_email_prep == 'true' && '✅' || '❌' }} **Email Preparation** - Email content ready for sending
           - ${{ github.event.inputs.enable_webhook_notifications == 'true' && '✅' || '❌' }} **Custom Webhook** - API notifications
+          - ${{ github.event.inputs.enable_discord_notifications == 'true' && '✅' || '❌' }} **Discord** - Gaming community updates
           
           ## 🔗 Quick Links
           - [📊 Live Workflow Progress](${{ steps.init.outputs.run_url }})
@@ -154,7 +179,114 @@ jobs:
           ⏳ **Status**: Processing... (this summary will update when complete)
           EOF
 
-      # 2. ISSUE COMMENT NOTIFICATION
+      # 2. SLACK NOTIFICATION
+      - name: 📱 Send Slack start notification
+        if: github.event.inputs.enable_slack_notifications == 'true' && github.event.inputs.slack_webhook_url != ''
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{
+              "text": "🚀 DataGenerator Multi-Channel Workflow Started",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🚀 DataGenerator Started (Multi-Channel)"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*👤 User:*\n${{ github.actor }}"
+                    },
+                    {
+                      "type": "mrkdwn", 
+                      "text": "*🕒 Started:*\n${{ steps.init.outputs.start_time }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*📈 Rows:*\n${{ github.event.inputs.rows }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*⚙️ Workers:*\n${{ github.event.inputs.max_workers }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*🔔 Notifications:* ${{ steps.init.outputs.notification_methods }}\n*📁 Input:* ${{ github.event.inputs.input_method == 'url' && '🌐 URL' || '📂 Repository File' }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "📊 View Progress"
+                      },
+                      "url": "${{ steps.init.outputs.run_url }}"
+                    }
+                  ]
+                }
+              ]
+            }' \
+            "${{ github.event.inputs.slack_webhook_url }}"
+
+      # 3. DISCORD NOTIFICATION
+      - name: 🎮 Send Discord start notification
+        if: github.event.inputs.enable_discord_notifications == 'true' && github.event.inputs.discord_webhook_url != ''
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{
+              "embeds": [
+                {
+                  "title": "🚀 DataGenerator Started",
+                  "description": "Multi-channel workflow initiated with multiple notification methods",
+                  "color": 3447003,
+                  "fields": [
+                    {
+                      "name": "👤 User",
+                      "value": "${{ github.actor }}",
+                      "inline": true
+                    },
+                    {
+                      "name": "📈 Rows",
+                      "value": "${{ github.event.inputs.rows }}",
+                      "inline": true
+                    },
+                    {
+                      "name": "⚙️ Workers",
+                      "value": "${{ github.event.inputs.max_workers }}",
+                      "inline": true
+                    },
+                    {
+                      "name": "🕒 Started",
+                      "value": "${{ steps.init.outputs.start_time }}",
+                      "inline": false
+                    },
+                    {
+                      "name": "🔔 Active Channels",
+                      "value": "${{ steps.init.outputs.notification_methods }}",
+                      "inline": false
+                    }
+                  ],
+                  "footer": {
+                    "text": "DataGenerator Workflow"
+                  },
+                  "timestamp": "${{ steps.init.outputs.start_time }}"
+                }
+              ]
+            }' \
+            "${{ github.event.inputs.discord_webhook_url }}"
+
+      # 4. ISSUE COMMENT NOTIFICATION
       - name: 💬 Send issue comment notification
         if: github.event.inputs.enable_issue_comments == 'true'
         uses: actions/github-script@v7
@@ -205,7 +337,7 @@ jobs:
               ---`
             });
 
-      # 3. EMAIL PREPARATION
+      # 5. EMAIL PREPARATION
       - name: 📧 Prepare email notification content
         if: github.event.inputs.enable_email_prep == 'true' && github.event.inputs.email_address != ''
         run: |
@@ -249,7 +381,7 @@ jobs:
           echo "📧 Email content prepared for: ${{ github.event.inputs.email_address }}"
           echo "📄 Email file created: email_notifications/start_email.txt"
 
-      # 4. CUSTOM WEBHOOK NOTIFICATION
+      # 6. CUSTOM WEBHOOK NOTIFICATION
       - name: 🔗 Send custom webhook notification
         if: github.event.inputs.enable_webhook_notifications == 'true' && github.event.inputs.custom_webhook_url != ''
         run: |
@@ -384,10 +516,12 @@ jobs:
             EMOJI="🎉"
             STATUS_TEXT="✅ Completed Successfully"
             COLOR="good"
+            DISCORD_COLOR=3066993
           else
             EMOJI="💥"
             STATUS_TEXT="❌ Failed"
             COLOR="danger"
+            DISCORD_COLOR=15158332
           fi
           
           # Count output files and calculate sizes
@@ -433,6 +567,7 @@ jobs:
           echo "status_text=$STATUS_TEXT" >> $GITHUB_OUTPUT
           echo "emoji=$EMOJI" >> $GITHUB_OUTPUT
           echo "color=$COLOR" >> $GITHUB_OUTPUT
+          echo "discord_color=$DISCORD_COLOR" >> $GITHUB_OUTPUT
           echo "completion_time=$COMPLETION_TIME" >> $GITHUB_OUTPUT
           echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
           echo "total_size=$TOTAL_SIZE" >> $GITHUB_OUTPUT
@@ -472,15 +607,118 @@ jobs:
           ## 🔔 Notification Summary
           All enabled notification channels have been updated with completion status:
           - ${{ github.event.inputs.enable_workflow_summary == 'true' && '✅' || '❌' }} Workflow Summary
+          - ${{ github.event.inputs.enable_slack_notifications == 'true' && '✅' || '❌' }} Slack Notifications  
           - ${{ github.event.inputs.enable_issue_comments == 'true' && '✅' || '❌' }} Issue Comments
           - ${{ github.event.inputs.enable_email_prep == 'true' && '✅' || '❌' }} Email Preparation
           - ${{ github.event.inputs.enable_webhook_notifications == 'true' && '✅' || '❌' }} Custom Webhook
+          - ${{ github.event.inputs.enable_discord_notifications == 'true' && '✅' || '❌' }} Discord Notifications
           
           ---
           ${{ steps.stats.outputs.emoji }} **Multi-channel workflow completed at ${{ steps.stats.outputs.completion_time }}**
           EOF
 
-      # 2. ISSUE COMMENT COMPLETION
+      # 2. SLACK COMPLETION
+      - name: 📱 Send Slack completion notification
+        if: github.event.inputs.enable_slack_notifications == 'true' && github.event.inputs.slack_webhook_url != '' && always()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"${{ steps.stats.outputs.emoji }} DataGenerator ${{ steps.stats.outputs.status_text }}\",
+              \"attachments\": [
+                {
+                  \"color\": \"${{ steps.stats.outputs.color }}\",
+                  \"fields\": [
+                    {
+                      \"title\": \"Status\",
+                      \"value\": \"${{ steps.stats.outputs.status_text }}\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Files Generated\",
+                      \"value\": \"${{ steps.stats.outputs.file_count }}\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Total Size\",
+                      \"value\": \"${{ steps.stats.outputs.total_size }}\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Run #\",
+                      \"value\": \"${{ github.run_number }}\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Completed\",
+                      \"value\": \"${{ steps.stats.outputs.completion_time }}\",
+                      \"short\": false
+                    },
+                    {
+                      \"title\": \"Notification Channels\",
+                      \"value\": \"${{ steps.init.outputs.notification_methods }}\",
+                      \"short\": false
+                    }
+                  ],
+                  \"actions\": [
+                    {
+                      \"type\": \"button\",
+                      \"text\": \"📥 Download Results\",
+                      \"url\": \"${{ steps.init.outputs.run_url }}\"
+                    }
+                  ]
+                }
+              ]
+            }" \
+            "${{ github.event.inputs.slack_webhook_url }}"
+
+      # 3. DISCORD COMPLETION
+      - name: 🎮 Send Discord completion notification
+        if: github.event.inputs.enable_discord_notifications == 'true' && github.event.inputs.discord_webhook_url != '' && always()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"embeds\": [
+                {
+                  \"title\": \"${{ steps.stats.outputs.emoji }} DataGenerator ${{ steps.stats.outputs.status_text }}\",
+                  \"description\": \"Multi-channel workflow completed with notifications sent to all enabled channels\",
+                  \"color\": ${{ steps.stats.outputs.discord_color }},
+                  \"fields\": [
+                    {
+                      \"name\": \"📊 Files Generated\",
+                      \"value\": \"${{ steps.stats.outputs.file_count }}\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"💾 Total Size\",
+                      \"value\": \"${{ steps.stats.outputs.total_size }}\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"🔢 Run Number\",
+                      \"value\": \"#${{ github.run_number }}\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"⏱️ Completed\",
+                      \"value\": \"${{ steps.stats.outputs.completion_time }}\",
+                      \"inline\": false
+                    },
+                    {
+                      \"name\": \"🔔 Notification Channels\",
+                      \"value\": \"${{ steps.init.outputs.notification_methods }}\",
+                      \"inline\": false
+                    }
+                  ],
+                  \"footer\": {
+                    \"text\": \"DataGenerator Multi-Channel Workflow\"
+                  },
+                  \"timestamp\": \"${{ steps.stats.outputs.completion_time }}\"
+                }
+              ]
+            }" \
+            "${{ github.event.inputs.discord_webhook_url }}"
+
+      # 4. ISSUE COMMENT COMPLETION
       - name: 💬 Send issue completion comment
         if: github.event.inputs.enable_issue_comments == 'true' && always()
         uses: actions/github-script@v7
@@ -527,7 +765,7 @@ jobs:
               });
             }
 
-      # 3. EMAIL COMPLETION PREPARATION
+      # 5. EMAIL COMPLETION PREPARATION
       - name: 📧 Prepare completion email content
         if: github.event.inputs.enable_email_prep == 'true' && github.event.inputs.email_address != '' && always()
         run: |
@@ -576,7 +814,7 @@ jobs:
           echo "📧 Completion email content prepared"
           echo "📄 Email file created: email_notifications/completion_email.txt"
 
-      # 4. CUSTOM WEBHOOK COMPLETION
+      # 6. CUSTOM WEBHOOK COMPLETION
       - name: 🔗 Send custom webhook completion notification
         if: github.event.inputs.enable_webhook_notifications == 'true' && github.event.inputs.custom_webhook_url != '' && always()
         run: |
@@ -612,7 +850,7 @@ jobs:
             }" \
             "${{ github.event.inputs.custom_webhook_url }}"
 
-      # 5. UPLOAD EMAIL FILES AS ARTIFACTS
+      # 7. UPLOAD EMAIL FILES AS ARTIFACTS
       - name: 📧 Upload email notifications as artifacts
         if: github.event.inputs.enable_email_prep == 'true' && always()
         uses: actions/upload-artifact@v4
