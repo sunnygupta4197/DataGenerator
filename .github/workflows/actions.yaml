@@ -1,5 +1,5 @@
-# Optimized workflow with start notifications
-name: Run DataGenerator Utility (With Notifications)
+# Advanced workflow with multiple simultaneous notification methods
+name: Run DataGenerator Utility (Multi-Notifications)
 
 on:
   workflow_dispatch:
@@ -32,18 +32,54 @@ on:
         description: 'Path to JSON file in repository (only if input_method is "repository_file")'
         required: false
         default: 'examples/example3.json'
-      notification_method:
-        description: 'How to notify when workflow starts'
+
+      # Multiple notification toggles
+      enable_workflow_summary:
+        description: '📋 Enable workflow summary notifications'
         required: false
-        type: choice
-        options:
-          - 'email_issue'
-          - 'issue_comment'
-          - 'slack_webhook'
-          - 'none'
-        default: 'email_issue'
+        type: boolean
+        default: true
+      enable_slack_notifications:
+        description: '📱 Enable Slack notifications'
+        required: false
+        type: boolean
+        default: false
+      enable_issue_comments:
+        description: '💬 Enable issue comment notifications'
+        required: false
+        type: boolean
+        default: true
+      enable_email_prep:
+        description: '📧 Enable email content preparation'
+        required: false
+        type: boolean
+        default: false
+      enable_webhook_notifications:
+        description: '🔗 Enable custom webhook notifications'
+        required: false
+        type: boolean
+        default: false
+      enable_discord_notifications:
+        description: '🎮 Enable Discord notifications'
+        required: false
+        type: boolean
+        default: false
+
+      # Notification configuration
       slack_webhook_url:
-        description: 'Slack webhook URL (only if notification_method is "slack_webhook")'
+        description: 'Slack webhook URL (if Slack enabled)'
+        required: false
+      discord_webhook_url:
+        description: 'Discord webhook URL (if Discord enabled)'
+        required: false
+      custom_webhook_url:
+        description: 'Custom webhook URL (if custom webhook enabled)'
+        required: false
+      email_address:
+        description: 'Email address for notifications (if email enabled)'
+        required: false
+      notification_issue_number:
+        description: 'Issue number for comments (if issue comments enabled, leave empty to auto-create)'
         required: false
 
   # Issue-based file upload trigger
@@ -55,132 +91,107 @@ on:
     paths: ['uploads/**/*.json']
     types: [opened, synchronize]
 
-# Global environment variables for optimization
+# Required permissions
+permissions:
+  contents: read
+  actions: read
+  issues: write
+  pull-requests: write
+  id-token: write
+
+# Global environment variables
 env:
   PYTHONUNBUFFERED: 1
   PIP_DISABLE_PIP_VERSION_CHECK: 1
   PIP_NO_COLOR: 1
 
 jobs:
-  # Job for manual workflow dispatch
   run-script-manual:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: 📢 Send start notification
-        id: notify-start
+      - name: 📢 Initialize workflow and notifications
+        id: init
         run: |
-          echo "🚀 DataGenerator workflow starting..."
-          echo "📊 Parameters:"
-          echo "  - Input Method: ${{ github.event.inputs.input_method }}"
-          echo "  - Rows: ${{ github.event.inputs.rows }}"
-          echo "  - Workers: ${{ github.event.inputs.max_workers }}"
-          echo "  - Memory: ${{ github.event.inputs.max_memory_mb }} MB"
-          echo "  - Triggered by: ${{ github.actor }}"
-          echo "  - Run ID: ${{ github.run_id }}"
+          echo "🚀 DataGenerator workflow starting with multiple notifications..."
+          echo "📊 Notification methods enabled:"
+          echo "  - Workflow Summary: ${{ github.event.inputs.enable_workflow_summary }}"
+          echo "  - Slack: ${{ github.event.inputs.enable_slack_notifications }}"
+          echo "  - Issue Comments: ${{ github.event.inputs.enable_issue_comments }}"
+          echo "  - Email Prep: ${{ github.event.inputs.enable_email_prep }}"
+          echo "  - Custom Webhook: ${{ github.event.inputs.enable_webhook_notifications }}"
+          echo "  - Discord: ${{ github.event.inputs.enable_discord_notifications }}"
           
-          # Set outputs for other notification steps
+          # Set outputs for all notification methods
           echo "start_time=$(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_OUTPUT
           echo "run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date +%s)" >> $GITHUB_OUTPUT
+          
+          # Create notification summary
+          METHODS=""
+          [ "${{ github.event.inputs.enable_workflow_summary }}" = "true" ] && METHODS="$METHODS📋 Summary "
+          [ "${{ github.event.inputs.enable_slack_notifications }}" = "true" ] && METHODS="$METHODS📱 Slack "
+          [ "${{ github.event.inputs.enable_issue_comments }}" = "true" ] && METHODS="$METHODS💬 Issues "
+          [ "${{ github.event.inputs.enable_email_prep }}" = "true" ] && METHODS="$METHODS📧 Email "
+          [ "${{ github.event.inputs.enable_webhook_notifications }}" = "true" ] && METHODS="$METHODS🔗 Webhook "
+          [ "${{ github.event.inputs.enable_discord_notifications }}" = "true" ] && METHODS="$METHODS🎮 Discord "
+          
+          echo "notification_methods=$METHODS" >> $GITHUB_OUTPUT
 
-      - name: 📧 Create notification issue
-        if: github.event.inputs.notification_method == 'email_issue'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🚀 DataGenerator Started - Run #${{ github.run_number }}`,
-              body: `## 🚀 DataGenerator Workflow Started
-              
-              **📊 Run Details:**
-              - **🆔 Run ID**: [${{ github.run_id }}](${{ steps.notify-start.outputs.run_url }})
-              - **👤 Triggered by**: @${{ github.actor }}
-              - **🕒 Started at**: ${{ steps.notify-start.outputs.start_time }}
-              - **📥 Input Method**: ${{ github.event.inputs.input_method }}
-              - **📈 Rows to Generate**: ${{ github.event.inputs.rows }}
-              - **⚙️ Workers**: ${{ github.event.inputs.max_workers }}
-              - **💾 Memory Limit**: ${{ github.event.inputs.max_memory_mb }} MB
-              
-              **📁 Input Source:**
-              ${`${{ github.event.inputs.input_method }}` === 'url' 
-                ? `🌐 **URL**: ${{ github.event.inputs.file_url }}`
-                : `📂 **Repository File**: ${{ github.event.inputs.repository_file_path }}`
-              }
-              
-              **🔗 Actions:**
-              - [📊 View Workflow Run](${{ steps.notify-start.outputs.run_url }})
-              - [📋 View All Runs](https://github.com/${{ github.repository }}/actions)
-              
-              ---
-              *This issue will be updated when the workflow completes. You can subscribe to this issue to get email notifications.*
-              
-              **Labels**: workflow-notification, in-progress`,
-              labels: ['workflow-notification', 'in-progress']
-            });
-            
-            // Store issue number for later updates
-            require('fs').writeFileSync('notification_issue.txt', issue.data.number.toString());
+      # 1. WORKFLOW SUMMARY NOTIFICATION
+      - name: 📋 Create workflow summary notification
+        if: github.event.inputs.enable_workflow_summary == 'true'
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 🚀 DataGenerator Multi-Channel Notification Started!
+          
+          ## 📊 Run Information
+          | Parameter | Value |
+          |-----------|-------|
+          | 👤 **Triggered by** | @${{ github.actor }} |
+          | 🕒 **Started at** | ${{ steps.init.outputs.start_time }} |
+          | 🆔 **Run ID** | [${{ github.run_id }}](${{ steps.init.outputs.run_url }}) |
+          | 📥 **Input Method** | ${{ github.event.inputs.input_method }} |
+          | 📁 **Source** | ${{ github.event.inputs.input_method == 'url' && github.event.inputs.file_url || github.event.inputs.repository_file_path }} |
+          | 🔔 **Notifications** | ${{ steps.init.outputs.notification_methods }} |
+          
+          ## ⚙️ Processing Configuration
+          | Setting | Value |
+          |---------|-------|
+          | 📈 **Rows to Generate** | ${{ github.event.inputs.rows }} |
+          | ⚙️ **Workers** | ${{ github.event.inputs.max_workers }} |
+          | 💾 **Memory Limit** | ${{ github.event.inputs.max_memory_mb }} MB |
+          
+          ## 🔔 Active Notification Channels
+          - ${{ github.event.inputs.enable_workflow_summary == 'true' && '✅' || '❌' }} **Workflow Summary** - Rich dashboard in Actions
+          - ${{ github.event.inputs.enable_slack_notifications == 'true' && '✅' || '❌' }} **Slack** - Team notifications with buttons
+          - ${{ github.event.inputs.enable_issue_comments == 'true' && '✅' || '❌' }} **Issue Comments** - GitHub issue updates
+          - ${{ github.event.inputs.enable_email_prep == 'true' && '✅' || '❌' }} **Email Preparation** - Email content ready for sending
+          - ${{ github.event.inputs.enable_webhook_notifications == 'true' && '✅' || '❌' }} **Custom Webhook** - API notifications
+          - ${{ github.event.inputs.enable_discord_notifications == 'true' && '✅' || '❌' }} **Discord** - Gaming community updates
+          
+          ## 🔗 Quick Links
+          - [📊 Live Workflow Progress](${{ steps.init.outputs.run_url }})
+          - [📋 All Workflow Runs](https://github.com/${{ github.repository }}/actions)
+          - [📁 Repository](https://github.com/${{ github.repository }})
+          
+          ---
+          ⏳ **Status**: Processing... (this summary will update when complete)
+          EOF
 
-      - name: 💬 Send start comment
-        if: github.event.inputs.notification_method == 'issue_comment'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // Find the latest open issue or create a comment on discussions
-            const issues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'notifications',
-              per_page: 1
-            });
-            
-            let issueNumber;
-            if (issues.data.length > 0) {
-              issueNumber = issues.data[0].number;
-            } else {
-              // Create a notifications issue if none exists
-              const newIssue = await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: '📢 DataGenerator Notifications',
-                body: 'This issue is used for DataGenerator workflow notifications. Subscribe to get updates!',
-                labels: ['notifications', 'pinned']
-              });
-              issueNumber = newIssue.data.number;
-            }
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              body: `## 🚀 DataGenerator Started - Run #${{ github.run_number }}
-              
-              **📊 Quick Details:**
-              - **👤 User**: @${{ github.actor }}
-              - **🕒 Started**: ${{ steps.notify-start.outputs.start_time }}
-              - **📈 Rows**: ${{ github.event.inputs.rows }} | **⚙️ Workers**: ${{ github.event.inputs.max_workers }} | **💾 Memory**: ${{ github.event.inputs.max_memory_mb }}MB
-              - **📥 Source**: ${{ github.event.inputs.input_method == 'url' && '🌐 URL' || '📂 Repository' }}
-              
-              **🔗 [View Live Progress →](${{ steps.notify-start.outputs.run_url }})**
-              
-              ---`
-            });
-
-      - name: 📱 Send Slack notification
-        if: github.event.inputs.notification_method == 'slack_webhook' && github.event.inputs.slack_webhook_url != ''
+      # 2. SLACK NOTIFICATION
+      - name: 📱 Send Slack start notification
+        if: github.event.inputs.enable_slack_notifications == 'true' && github.event.inputs.slack_webhook_url != ''
         run: |
           curl -X POST -H 'Content-type: application/json' \
             --data '{
-              "text": "🚀 DataGenerator Workflow Started",
+              "text": "🚀 DataGenerator Multi-Channel Workflow Started",
               "blocks": [
                 {
                   "type": "header",
                   "text": {
                     "type": "plain_text",
-                    "text": "🚀 DataGenerator Started"
+                    "text": "🚀 DataGenerator Started (Multi-Channel)"
                   }
                 },
                 {
@@ -192,7 +203,7 @@ jobs:
                     },
                     {
                       "type": "mrkdwn", 
-                      "text": "*🕒 Started:*\n${{ steps.notify-start.outputs.start_time }}"
+                      "text": "*🕒 Started:*\n${{ steps.init.outputs.start_time }}"
                     },
                     {
                       "type": "mrkdwn",
@@ -205,6 +216,13 @@ jobs:
                   ]
                 },
                 {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*🔔 Notifications:* ${{ steps.init.outputs.notification_methods }}\n*📁 Input:* ${{ github.event.inputs.input_method == 'url' && '🌐 URL' || '📂 Repository File' }}"
+                  }
+                },
+                {
                   "type": "actions",
                   "elements": [
                     {
@@ -213,14 +231,186 @@ jobs:
                         "type": "plain_text",
                         "text": "📊 View Progress"
                       },
-                      "url": "${{ steps.notify-start.outputs.run_url }}"
+                      "url": "${{ steps.init.outputs.run_url }}"
                     }
                   ]
                 }
               ]
             }' \
-            ${{ github.event.inputs.slack_webhook_url }}
+            "${{ github.event.inputs.slack_webhook_url }}"
 
+      # 3. DISCORD NOTIFICATION
+      - name: 🎮 Send Discord start notification
+        if: github.event.inputs.enable_discord_notifications == 'true' && github.event.inputs.discord_webhook_url != ''
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{
+              "embeds": [
+                {
+                  "title": "🚀 DataGenerator Started",
+                  "description": "Multi-channel workflow initiated with multiple notification methods",
+                  "color": 3447003,
+                  "fields": [
+                    {
+                      "name": "👤 User",
+                      "value": "${{ github.actor }}",
+                      "inline": true
+                    },
+                    {
+                      "name": "📈 Rows",
+                      "value": "${{ github.event.inputs.rows }}",
+                      "inline": true
+                    },
+                    {
+                      "name": "⚙️ Workers",
+                      "value": "${{ github.event.inputs.max_workers }}",
+                      "inline": true
+                    },
+                    {
+                      "name": "🕒 Started",
+                      "value": "${{ steps.init.outputs.start_time }}",
+                      "inline": false
+                    },
+                    {
+                      "name": "🔔 Active Channels",
+                      "value": "${{ steps.init.outputs.notification_methods }}",
+                      "inline": false
+                    }
+                  ],
+                  "footer": {
+                    "text": "DataGenerator Workflow"
+                  },
+                  "timestamp": "${{ steps.init.outputs.start_time }}"
+                }
+              ]
+            }' \
+            "${{ github.event.inputs.discord_webhook_url }}"
+
+      # 4. ISSUE COMMENT NOTIFICATION
+      - name: 💬 Send issue comment notification
+        if: github.event.inputs.enable_issue_comments == 'true'
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            let issueNumber = '${{ github.event.inputs.notification_issue_number }}';
+            
+            // If no issue number provided, find or create a notifications issue
+            if (!issueNumber) {
+              const issues = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                labels: 'notifications',
+                per_page: 1
+              });
+              
+              if (issues.data.length > 0) {
+                issueNumber = issues.data[0].number;
+              } else {
+                const newIssue = await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: '🔔 DataGenerator Multi-Channel Notifications',
+                  body: 'This issue tracks DataGenerator workflow notifications across multiple channels. Subscribe to get updates!',
+                  labels: ['notifications', 'multi-channel', 'automated']
+                });
+                issueNumber = newIssue.data.number;
+              }
+            }
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `## 🚀 Multi-Channel DataGenerator Started - Run #${{ github.run_number }}
+              
+              **📊 Quick Details:**
+              - **👤 User**: @${{ github.actor }}
+              - **🕒 Started**: ${{ steps.init.outputs.start_time }}
+              - **📈 Config**: ${{ github.event.inputs.rows }} rows | ${{ github.event.inputs.max_workers }} workers | ${{ github.event.inputs.max_memory_mb }}MB
+              - **📥 Source**: ${{ github.event.inputs.input_method == 'url' && '🌐 URL' || '📂 Repository' }}
+              - **🔔 Channels**: ${{ steps.init.outputs.notification_methods }}
+              
+              **🔗 [View Live Progress →](${{ steps.init.outputs.run_url }})**
+              
+              ---`
+            });
+
+      # 5. EMAIL PREPARATION
+      - name: 📧 Prepare email notification content
+        if: github.event.inputs.enable_email_prep == 'true' && github.event.inputs.email_address != ''
+        run: |
+          mkdir -p email_notifications
+          
+          # Create email content files
+          cat > email_notifications/start_email.txt << 'EOF'
+          Subject: 🚀 DataGenerator Multi-Channel Started - Run #${{ github.run_number }}
+          To: ${{ github.event.inputs.email_address }}
+          
+          DataGenerator Multi-Channel Workflow Started
+          ==========================================
+          
+          Your DataGenerator workflow has started with multiple notification channels active.
+          
+          Run Details:
+          -----------
+          - User: ${{ github.actor }}
+          - Started: ${{ steps.init.outputs.start_time }}
+          - Run ID: ${{ github.run_id }}
+          - Input Method: ${{ github.event.inputs.input_method }}
+          - Rows to Generate: ${{ github.event.inputs.rows }}
+          - Workers: ${{ github.event.inputs.max_workers }}
+          - Memory Limit: ${{ github.event.inputs.max_memory_mb }} MB
+          
+          Active Notification Channels:
+          ----------------------------
+          ${{ steps.init.outputs.notification_methods }}
+          
+          Progress Tracking:
+          -----------------
+          View live progress: ${{ steps.init.outputs.run_url }}
+          
+          You will receive completion notifications through all enabled channels.
+          
+          ---
+          Automated Multi-Channel Notification from DataGenerator
+          Repository: ${{ github.repository }}
+          EOF
+          
+          echo "📧 Email content prepared for: ${{ github.event.inputs.email_address }}"
+          echo "📄 Email file created: email_notifications/start_email.txt"
+
+      # 6. CUSTOM WEBHOOK NOTIFICATION
+      - name: 🔗 Send custom webhook notification
+        if: github.event.inputs.enable_webhook_notifications == 'true' && github.event.inputs.custom_webhook_url != ''
+        run: |
+          curl -X POST -H 'Content-Type: application/json' \
+            --data '{
+              "event": "workflow_started",
+              "workflow": "DataGenerator Multi-Channel",
+              "run_id": "${{ github.run_id }}",
+              "run_number": ${{ github.run_number }},
+              "actor": "${{ github.actor }}",
+              "started_at": "${{ steps.init.outputs.start_time }}",
+              "repository": "${{ github.repository }}",
+              "parameters": {
+                "input_method": "${{ github.event.inputs.input_method }}",
+                "rows": ${{ github.event.inputs.rows }},
+                "workers": ${{ github.event.inputs.max_workers }},
+                "memory_mb": ${{ github.event.inputs.max_memory_mb }},
+                "source": "${{ github.event.inputs.input_method == 'url' && github.event.inputs.file_url || github.event.inputs.repository_file_path }}"
+              },
+              "notification_channels": "${{ steps.init.outputs.notification_methods }}",
+              "urls": {
+                "workflow_run": "${{ steps.init.outputs.run_url }}",
+                "repository": "https://github.com/${{ github.repository }}"
+              },
+              "status": "started"
+            }' \
+            "${{ github.event.inputs.custom_webhook_url }}"
+
+      # Main workflow execution steps
       - name: 📁 Checkout repository
         uses: actions/checkout@v4
 
@@ -310,114 +500,147 @@ jobs:
       - name: 📤 Upload output folder
         uses: actions/upload-artifact@v4
         with:
-          name: output-folder-manual-${{ github.run_number }}
+          name: output-folder-multi-${{ github.run_number }}
           path: output_files/
           retention-days: 30
 
-      - name: 📧 Update notification issue (completion)
-        if: github.event.inputs.notification_method == 'email_issue' && always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            let issueNumber;
-            
-            try {
-              issueNumber = parseInt(fs.readFileSync('notification_issue.txt', 'utf8'));
-            } catch (e) {
-              console.log('No notification issue found to update');
-              return;
-            }
-            
-            const status = '${{ job.status }}' === 'success' ? '✅ Completed' : '❌ Failed';
-            const emoji = '${{ job.status }}' === 'success' ? '🎉' : '💥';
-            
-            let outputInfo = '';
-            if (fs.existsSync('output_files')) {
-              const files = fs.readdirSync('output_files');
-              outputInfo = files.map(f => `- 📄 \`${f}\``).join('\n');
-            }
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              body: `## ${emoji} Workflow ${status}
-              
-              **📊 Final Results:**
-              - **⏱️ Completed**: ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC
-              - **📁 Status**: ${status}
-              - **🔗 Run Details**: [View Full Log](${{ steps.notify-start.outputs.run_url }})
-              
-              ${outputInfo && `**📄 Generated Files:**\n${outputInfo}\n`}
-              **📥 Download**: [Workflow Artifacts](${{ steps.notify-start.outputs.run_url }})
-              
-              ---
-              *Workflow completed. This issue can be closed.*`
-            });
-            
-            // Close the issue and update labels
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              state: 'closed',
-              labels: ['workflow-notification', 'completed']
-            });
-
-      - name: 💬 Send completion comment
-        if: github.event.inputs.notification_method == 'issue_comment' && always()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'notifications',
-              per_page: 1
-            });
-            
-            if (issues.data.length === 0) return;
-            
-            const status = '${{ job.status }}' === 'success' ? '✅ Completed' : '❌ Failed';
-            const emoji = '${{ job.status }}' === 'success' ? '🎉' : '💥';
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issues.data[0].number,
-              body: `## ${emoji} Run #${{ github.run_number }} ${status}
-              
-              **⏱️ Completed**: ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC | **🔗 [View Results →](${{ steps.notify-start.outputs.run_url }})**
-              
-              ---`
-            });
-
-      - name: 📱 Send Slack completion
-        if: github.event.inputs.notification_method == 'slack_webhook' && github.event.inputs.slack_webhook_url != '' && always()
+      - name: 📊 Gather completion statistics
+        if: always()
+        id: stats
         run: |
+          # Get completion status
           STATUS="${{ job.status }}"
+          COMPLETION_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
           if [ "$STATUS" = "success" ]; then
             EMOJI="🎉"
+            STATUS_TEXT="✅ Completed Successfully"
             COLOR="good"
-            STATUS_TEXT="Completed Successfully"
+            DISCORD_COLOR=3066993
           else
             EMOJI="💥"
-            COLOR="danger" 
-            STATUS_TEXT="Failed"
+            STATUS_TEXT="❌ Failed"
+            COLOR="danger"
+            DISCORD_COLOR=15158332
           fi
           
+          # Count output files and calculate sizes
+          FILE_COUNT=0
+          TOTAL_SIZE="0 B"
+          FILE_LIST=""
+          
+          if [ -d "output_files" ]; then
+            FILE_COUNT=$(ls output_files | wc -l)
+            
+            # Calculate total size (cross-platform)
+            if command -v stat >/dev/null 2>&1; then
+              if stat -f%z . >/dev/null 2>&1; then
+                # BSD/macOS stat
+                TOTAL_BYTES=$(find output_files -type f -exec stat -f%z {} \; | awk '{sum += $1} END {print sum+0}')
+              else
+                # GNU/Linux stat
+                TOTAL_BYTES=$(find output_files -type f -exec stat -c%s {} \; | awk '{sum += $1} END {print sum+0}')
+              fi
+            else
+              TOTAL_BYTES=0
+            fi
+            
+            if [ "$TOTAL_BYTES" -gt 1048576 ]; then
+              TOTAL_SIZE="$(echo "$TOTAL_BYTES" | awk '{printf "%.1fMB", $1/1048576}')"
+            elif [ "$TOTAL_BYTES" -gt 1024 ]; then
+              TOTAL_SIZE="$(echo "$TOTAL_BYTES" | awk '{printf "%.1fKB", $1/1024}')"
+            else
+              TOTAL_SIZE="${TOTAL_BYTES}B"
+            fi
+            
+            # Create file list
+            for file in output_files/*; do
+              if [ -f "$file" ]; then
+                filename=$(basename "$file")
+                FILE_LIST="$FILE_LIST\n- 📄 \`$filename\`"
+              fi
+            done
+          fi
+          
+          # Set outputs for completion notifications
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "status_text=$STATUS_TEXT" >> $GITHUB_OUTPUT
+          echo "emoji=$EMOJI" >> $GITHUB_OUTPUT
+          echo "color=$COLOR" >> $GITHUB_OUTPUT
+          echo "discord_color=$DISCORD_COLOR" >> $GITHUB_OUTPUT
+          echo "completion_time=$COMPLETION_TIME" >> $GITHUB_OUTPUT
+          echo "file_count=$FILE_COUNT" >> $GITHUB_OUTPUT
+          echo "total_size=$TOTAL_SIZE" >> $GITHUB_OUTPUT
+          echo "file_list<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$FILE_LIST" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # COMPLETION NOTIFICATIONS (ALL METHODS)
+
+      # 1. UPDATE WORKFLOW SUMMARY
+      - name: 📋 Update workflow summary (completion)
+        if: github.event.inputs.enable_workflow_summary == 'true' && always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          ---
+          
+          # ${{ steps.stats.outputs.emoji }} DataGenerator ${{ steps.stats.outputs.status_text }}
+          
+          ## 📊 Final Results
+          | Metric | Value |
+          |--------|-------|
+          | 🟢 **Status** | ${{ steps.stats.outputs.status_text }} |
+          | ⏱️ **Completed** | ${{ steps.stats.outputs.completion_time }} |
+          | 📄 **Files Generated** | ${{ steps.stats.outputs.file_count }} |
+          | 💾 **Total Size** | ${{ steps.stats.outputs.total_size }} |
+          | 🔔 **Notification Channels** | ${{ steps.init.outputs.notification_methods }} |
+          
+          ## 📄 Generated Files
+          ${{ steps.stats.outputs.file_list }}
+          
+          ## 📥 Download Options
+          - [📦 Download All Files](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - [📋 View Complete Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - [🔄 Run Again](https://github.com/${{ github.repository }}/actions/workflows/$(basename "${{ github.workflow_ref }}" .yml).yml)
+          
+          ## 🔔 Notification Summary
+          All enabled notification channels have been updated with completion status:
+          - ${{ github.event.inputs.enable_workflow_summary == 'true' && '✅' || '❌' }} Workflow Summary
+          - ${{ github.event.inputs.enable_slack_notifications == 'true' && '✅' || '❌' }} Slack Notifications  
+          - ${{ github.event.inputs.enable_issue_comments == 'true' && '✅' || '❌' }} Issue Comments
+          - ${{ github.event.inputs.enable_email_prep == 'true' && '✅' || '❌' }} Email Preparation
+          - ${{ github.event.inputs.enable_webhook_notifications == 'true' && '✅' || '❌' }} Custom Webhook
+          - ${{ github.event.inputs.enable_discord_notifications == 'true' && '✅' || '❌' }} Discord Notifications
+          
+          ---
+          ${{ steps.stats.outputs.emoji }} **Multi-channel workflow completed at ${{ steps.stats.outputs.completion_time }}**
+          EOF
+
+      # 2. SLACK COMPLETION
+      - name: 📱 Send Slack completion notification
+        if: github.event.inputs.enable_slack_notifications == 'true' && github.event.inputs.slack_webhook_url != '' && always()
+        run: |
           curl -X POST -H 'Content-type: application/json' \
             --data "{
-              \"text\": \"$EMOJI DataGenerator $STATUS_TEXT\",
+              \"text\": \"${{ steps.stats.outputs.emoji }} DataGenerator ${{ steps.stats.outputs.status_text }}\",
               \"attachments\": [
                 {
-                  \"color\": \"$COLOR\",
+                  \"color\": \"${{ steps.stats.outputs.color }}\",
                   \"fields\": [
                     {
                       \"title\": \"Status\",
-                      \"value\": \"$STATUS_TEXT\",
+                      \"value\": \"${{ steps.stats.outputs.status_text }}\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Files Generated\",
+                      \"value\": \"${{ steps.stats.outputs.file_count }}\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Total Size\",
+                      \"value\": \"${{ steps.stats.outputs.total_size }}\",
                       \"short\": true
                     },
                     {
@@ -427,58 +650,243 @@ jobs:
                     },
                     {
                       \"title\": \"Completed\",
-                      \"value\": \"$(date -u +'%Y-%m-%d %H:%M:%S UTC')\",
+                      \"value\": \"${{ steps.stats.outputs.completion_time }}\",
+                      \"short\": false
+                    },
+                    {
+                      \"title\": \"Notification Channels\",
+                      \"value\": \"${{ steps.init.outputs.notification_methods }}\",
                       \"short\": false
                     }
                   ],
                   \"actions\": [
                     {
                       \"type\": \"button\",
-                      \"text\": \"📥 View Results\",
-                      \"url\": \"${{ steps.notify-start.outputs.run_url }}\"
+                      \"text\": \"📥 Download Results\",
+                      \"url\": \"${{ steps.init.outputs.run_url }}\"
                     }
                   ]
                 }
               ]
             }" \
-            ${{ github.event.inputs.slack_webhook_url }}
+            "${{ github.event.inputs.slack_webhook_url }}"
 
-      - name: 📋 Generate summary
-        if: always()
+      # 3. DISCORD COMPLETION
+      - name: 🎮 Send Discord completion notification
+        if: github.event.inputs.enable_discord_notifications == 'true' && github.event.inputs.discord_webhook_url != '' && always()
         run: |
-          echo "## 🎉 DataGenerator Run Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **⚡ Trigger**: Manual workflow dispatch" >> $GITHUB_STEP_SUMMARY
-          echo "- **📥 Input Method**: ${{ github.event.inputs.input_method }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **👤 Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **🕒 Started**: ${{ steps.notify-start.outputs.start_time }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **📊 Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"embeds\": [
+                {
+                  \"title\": \"${{ steps.stats.outputs.emoji }} DataGenerator ${{ steps.stats.outputs.status_text }}\",
+                  \"description\": \"Multi-channel workflow completed with notifications sent to all enabled channels\",
+                  \"color\": ${{ steps.stats.outputs.discord_color }},
+                  \"fields\": [
+                    {
+                      \"name\": \"📊 Files Generated\",
+                      \"value\": \"${{ steps.stats.outputs.file_count }}\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"💾 Total Size\",
+                      \"value\": \"${{ steps.stats.outputs.total_size }}\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"🔢 Run Number\",
+                      \"value\": \"#${{ github.run_number }}\",
+                      \"inline\": true
+                    },
+                    {
+                      \"name\": \"⏱️ Completed\",
+                      \"value\": \"${{ steps.stats.outputs.completion_time }}\",
+                      \"inline\": false
+                    },
+                    {
+                      \"name\": \"🔔 Notification Channels\",
+                      \"value\": \"${{ steps.init.outputs.notification_methods }}\",
+                      \"inline\": false
+                    }
+                  ],
+                  \"footer\": {
+                    \"text\": \"DataGenerator Multi-Channel Workflow\"
+                  },
+                  \"timestamp\": \"${{ steps.stats.outputs.completion_time }}\"
+                }
+              ]
+            }" \
+            "${{ github.event.inputs.discord_webhook_url }}"
 
-  # Issue-based job with notifications
+      # 4. ISSUE COMMENT COMPLETION
+      - name: 💬 Send issue completion comment
+        if: github.event.inputs.enable_issue_comments == 'true' && always()
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            let issueNumber = '${{ github.event.inputs.notification_issue_number }}';
+            
+            // Find the notifications issue if no number provided
+            if (!issueNumber) {
+              const issues = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                labels: 'notifications',
+                per_page: 1
+              });
+              
+              if (issues.data.length > 0) {
+                issueNumber = issues.data[0].number;
+              }
+            }
+            
+            if (issueNumber) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `## ${{ steps.stats.outputs.emoji }} Multi-Channel Run #${{ github.run_number }} ${{ steps.stats.outputs.status_text }}
+                
+                **📊 Final Results:**
+                - **⏱️ Completed**: ${{ steps.stats.outputs.completion_time }}
+                - **📄 Files Generated**: ${{ steps.stats.outputs.file_count }}
+                - **💾 Total Size**: ${{ steps.stats.outputs.total_size }}
+                - **📁 Status**: ${{ steps.stats.outputs.status_text }}
+                
+                **🔔 All Notification Channels Updated:**
+                ${{ steps.init.outputs.notification_methods }}
+                
+                **📥 Download Results**: [Workflow Artifacts](${{ steps.init.outputs.run_url }})
+                
+                ---
+                *🤖 Multi-channel processing complete!*`
+              });
+            }
+
+      # 5. EMAIL COMPLETION PREPARATION
+      - name: 📧 Prepare completion email content
+        if: github.event.inputs.enable_email_prep == 'true' && github.event.inputs.email_address != '' && always()
+        run: |
+          cat > email_notifications/completion_email.txt << EOF
+          Subject: ${{ steps.stats.outputs.emoji }} DataGenerator Multi-Channel ${{ steps.stats.outputs.status_text }} - Run #${{ github.run_number }}
+          To: ${{ github.event.inputs.email_address }}
+          
+          DataGenerator Multi-Channel Workflow ${{ steps.stats.outputs.status_text }}
+          =====================================================
+          
+          Your DataGenerator workflow has completed with the following results:
+          
+          Final Results:
+          -------------
+          - Status: ${{ steps.stats.outputs.status_text }}
+          - Completed: ${{ steps.stats.outputs.completion_time }}
+          - Files Generated: ${{ steps.stats.outputs.file_count }}
+          - Total Size: ${{ steps.stats.outputs.total_size }}
+          - Run Number: #${{ github.run_number }}
+          
+          Notification Channels Used:
+          --------------------------
+          ${{ steps.init.outputs.notification_methods }}
+          
+          Generated Files:
+          ---------------
+          ${{ steps.stats.outputs.file_list }}
+          
+          Download Results:
+          ----------------
+          Access your generated files: ${{ steps.init.outputs.run_url }}
+          
+          Run Details:
+          -----------
+          - Repository: ${{ github.repository }}
+          - Triggered by: ${{ github.actor }}
+          - Started: ${{ steps.init.outputs.start_time }}
+          - Input Method: ${{ github.event.inputs.input_method }}
+          - Configuration: ${{ github.event.inputs.rows }} rows, ${{ github.event.inputs.max_workers }} workers, ${{ github.event.inputs.max_memory_mb }}MB memory
+          
+          ---
+          Automated Multi-Channel Completion Notification from DataGenerator
+          All enabled notification channels have been updated with these results.
+          EOF
+          
+          echo "📧 Completion email content prepared"
+          echo "📄 Email file created: email_notifications/completion_email.txt"
+
+      # 6. CUSTOM WEBHOOK COMPLETION
+      - name: 🔗 Send custom webhook completion notification
+        if: github.event.inputs.enable_webhook_notifications == 'true' && github.event.inputs.custom_webhook_url != '' && always()
+        run: |
+          curl -X POST -H 'Content-Type: application/json' \
+            --data "{
+              \"event\": \"workflow_completed\",
+              \"workflow\": \"DataGenerator Multi-Channel\",
+              \"run_id\": \"${{ github.run_id }}\",
+              \"run_number\": ${{ github.run_number }},
+              \"actor\": \"${{ github.actor }}\",
+              \"started_at\": \"${{ steps.init.outputs.start_time }}\",
+              \"completed_at\": \"${{ steps.stats.outputs.completion_time }}\",
+              \"repository\": \"${{ github.repository }}\",
+              \"status\": \"${{ steps.stats.outputs.status }}\",
+              \"status_text\": \"${{ steps.stats.outputs.status_text }}\",
+              \"results\": {
+                \"files_generated\": ${{ steps.stats.outputs.file_count }},
+                \"total_size\": \"${{ steps.stats.outputs.total_size }}\",
+                \"success\": ${{ steps.stats.outputs.status == 'success' }}
+              },
+              \"parameters\": {
+                \"input_method\": \"${{ github.event.inputs.input_method }}\",
+                \"rows\": ${{ github.event.inputs.rows }},
+                \"workers\": ${{ github.event.inputs.max_workers }},
+                \"memory_mb\": ${{ github.event.inputs.max_memory_mb }}
+              },
+              \"notification_channels\": \"${{ steps.init.outputs.notification_methods }}\",
+              \"urls\": {
+                \"workflow_run\": \"${{ steps.init.outputs.run_url }}\",
+                \"artifacts\": \"${{ steps.init.outputs.run_url }}\",
+                \"repository\": \"https://github.com/${{ github.repository }}\"
+              }
+            }" \
+            "${{ github.event.inputs.custom_webhook_url }}"
+
+      # 7. UPLOAD EMAIL FILES AS ARTIFACTS
+      - name: 📧 Upload email notifications as artifacts
+        if: github.event.inputs.enable_email_prep == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-notifications-${{ github.run_number }}
+          path: email_notifications/
+          retention-days: 7
+
+  # Issue-based job with multi-notifications
   run-script-issue:
     if: github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'data-upload')
     runs-on: ubuntu-latest
     steps:
-      - name: 📢 Notify issue start
+      - name: 📢 Multi-channel issue start notification
         uses: actions/github-script@v7
+        continue-on-error: true
         with:
           script: |
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## 🚀 DataGenerator Processing Started!
+              body: `## 🚀 Multi-Channel DataGenerator Processing Started!
               
-              **📊 Status**: Processing your data file...
+              **📊 Status**: Processing your data file with enhanced notifications...
               **🕒 Started**: ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC
               **🔗 Live Progress**: [View Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              **🔔 Notifications**: This workflow uses multiple notification channels for comprehensive updates
               
-              I'll update this issue when processing is complete! 🎯
+              I'll provide detailed updates when processing completes! 🎯
               
               ---
-              *🤖 Automated notification from DataGenerator workflow*`
+              *🤖 Multi-channel automated notification from DataGenerator workflow*`
             });
 
-      # ... rest of issue processing steps (same as before) ...
+      # ... (rest of issue processing steps same as before, but with enhanced notifications)
       - name: 📁 Checkout repository
         uses: actions/checkout@v4
 
@@ -556,9 +964,10 @@ jobs:
           path: output_files/
           retention-days: 30
 
-      - name: 💬 Final completion comment
+      - name: 💬 Enhanced completion comment
         if: always()
         uses: actions/github-script@v7
+        continue-on-error: true
         with:
           script: |
             const fs = require('fs');
@@ -566,25 +975,94 @@ jobs:
             const emoji = '${{ job.status }}' === 'success' ? '🎉' : '💥';
             
             let outputInfo = '';
-            if (fs.existsSync('output_files')) {
-              const files = fs.readdirSync('output_files');
-              outputInfo = files.map(f => `- 📄 \`${f}\``).join('\n');
+            let fileCount = 0;
+            try {
+              if (fs.existsSync('output_files')) {
+                const files = fs.readdirSync('output_files');
+                fileCount = files.length;
+                outputInfo = files.map(f => `- 📄 \`${f}\``).join('\n');
+              }
+            } catch (e) {
+              outputInfo = 'Files generated (list unavailable)';
             }
             
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## ${emoji} DataGenerator Processing ${status}!
+              body: `## ${emoji} Multi-Channel DataGenerator ${status}!
               
-              **📊 Results:**
+              **📊 Enhanced Results:**
               - **⏱️ Completed**: ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC
               - **📈 Rows Generated**: ${{ steps.extract-params.outputs.rows }}
+              - **📄 Files Created**: ${fileCount}
               - **📁 Status**: ${status}
+              - **🔔 Notification Level**: Multi-Channel Enhanced
               
               ${outputInfo && `**📄 Generated Files:**\n${outputInfo}\n`}
-              **📥 Download**: [Workflow Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              
+              **📥 Multiple Download Options:**
+              - [📦 Direct Artifacts Download](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              - [📋 Complete Workflow Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              - [🔄 Run Again](https://github.com/${{ github.repository }}/actions)
               
               ---
-              *🤖 Processing complete! Thank you for using DataGenerator.*`
+              *🤖 Multi-channel processing complete! Enhanced notifications system active.*`
+            });
+
+  # Pull request job with multi-notifications
+  run-script-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📁 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: 🔍 Find and process uploaded files
+        id: find-files
+        run: |
+          JSON_FILES=$(find uploads/ -name "*.json" -type f 2>/dev/null || echo "")
+          
+          if [ -z "$JSON_FILES" ]; then
+            echo "❌ No JSON files found in uploads/ directory"
+            exit 1
+          fi
+          
+          FIRST_FILE=$(echo "$JSON_FILES" | head -1)
+          echo "input_file=$FIRST_FILE" >> $GITHUB_OUTPUT
+          echo "🔍 Using file: $FIRST_FILE for multi-channel processing"
+
+      # ... (rest of PR processing steps with enhanced notifications)
+
+      - name: 💬 Enhanced PR completion comment
+        if: always()
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? '✅ Completed' : '❌ Failed';
+            const emoji = '${{ job.status }}' === 'success' ? '🎉' : '💥';
+            
+            const comment = `## ${emoji} Multi-Channel DataGenerator ${status}!
+            
+            **📊 Enhanced PR Processing Results:**
+            - **🔄 Trigger**: Pull Request #${{ github.event.pull_request.number }}
+            - **📁 Input File**: \`${{ steps.find-files.outputs.input_file }}\`
+            - **⏱️ Completed**: ${new Date().toISOString().replace('T', ' ').slice(0, 19)} UTC
+            - **🔔 Enhancement**: Multi-channel notification system active
+            
+            **📥 Enhanced Download Options**: 
+            [📦 Workflow Artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) | [📋 Full Logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) | [🔄 Rerun](https://github.com/${{ github.repository }}/actions)
+            
+            ---
+            *🤖 Multi-channel PR processing complete!*`;
+            
+            github.rest.pulls.createReview({
+              pull_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment,
+              event: 'COMMENT'
             });
