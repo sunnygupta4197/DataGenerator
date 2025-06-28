@@ -1,3 +1,4 @@
+# Main workflow for manual trigger and repository files
 name: Run DataGenerator Utility
 
 on:
@@ -15,13 +16,36 @@ on:
         description: 'How much memory needs to use (in MB)'
         required: false
         default: 1024
-      file_url:
-        description: 'URL of the input file to download'
+      input_method:
+        description: 'Input method for JSON file'
         required: true
+        type: choice
+        options:
+          - 'url'
+          - 'repository_file'
+        default: 'url'
+      file_url:
+        description: 'URL of the input JSON file to download (only if input_method is "url")'
+        required: false
         default: 'https://raw.githubusercontent.com/sunnygupta4197/DataGenerator/master/examples/example5.json'
+      repository_file_path:
+        description: 'Path to JSON file in repository (only if input_method is "repository_file"). Users must commit files to repo first.'
+        required: false
+        default: 'data/input.json'
+      
+  # Issue-based file upload trigger
+  issues:
+    types: [opened, edited]
+    
+  # Pull request based file upload
+  pull_request:
+    paths: ['uploads/**/*.json']
+    types: [opened, synchronize]
 
 jobs:
-  run-script:
+  # Job for manual workflow dispatch
+  run-script-manual:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -35,21 +59,306 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Download input file
-        run: curl -L -o input.csv "${{ github.event.inputs.file_url }}"
-
-      - name: Check downloaded file
+      - name: Prepare input file from URL
+        if: github.event.inputs.input_method == 'url'
         run: |
-          echo "Downloaded file details:"
-          ls -lh input.csv
-          echo "First 10 lines of input.csv:"
-          head -n 10 input.csv
+          echo "Downloading file from URL: ${{ github.event.inputs.file_url }}"
+          curl -L -o input.json "${{ github.event.inputs.file_url }}"
 
-      - name: Run Python script
-        run: python main.py -c input.csv -r ${{ github.event.inputs.rows }} --enable_all_features --output_dir output_files -f csv -w ${{ github.event.inputs.max_workers }} -m ${{ github.event.inputs.max_memory_mb }}
+      - name: Prepare input file from repository
+        if: github.event.inputs.input_method == 'repository_file'
+        run: |
+          echo "Using file from repository: ${{ github.event.inputs.repository_file_path }}"
+          cp "${{ github.event.inputs.repository_file_path }}" input.json
+
+      - name: Validate input file exists
+        run: |
+          if [ ! -f input.json ]; then
+            echo "Error: input.json file not found!"
+            exit 1
+          fi
+
+      - name: Check input file
+        run: |
+          echo "Input file details:"
+          ls -lh input.json
+          echo "First 20 lines of input.json:"
+          head -n 20 input.json
+
+      - name: Validate JSON format
+        run: |
+          python -c "
+          import json
+          try:
+              with open('input.json', 'r') as f:
+                  json.load(f)
+              print('✅ JSON file is valid')
+          except json.JSONDecodeError as e:
+              print(f'❌ Invalid JSON file: {e}')
+              exit(1)
+          except Exception as e:
+              print(f'❌ Error reading file: {e}')
+              exit(1)
+          "
+
+      - name: Run DataGenerator
+        run: python main.py -c input.json -r ${{ github.event.inputs.rows }} --enable_all_features --output_dir output_files -f csv -w ${{ github.event.inputs.max_workers }} -m ${{ github.event.inputs.max_memory_mb }}
 
       - name: Upload output folder
         uses: actions/upload-artifact@v4
         with:
-          name: output-folder
+          name: output-folder-manual-${{ github.run_number }}
           path: output_files/
+
+      - name: Summary
+        run: |
+          echo "## 📊 DataGenerator Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: Manual workflow dispatch" >> $GITHUB_STEP_SUMMARY
+          echo "- **Input Method**: ${{ github.event.inputs.input_method }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.input_method }}" == "url" ]; then
+            echo "- **Source URL**: ${{ github.event.inputs.file_url }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Repository File**: ${{ github.event.inputs.repository_file_path }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- **Rows Generated**: ${{ github.event.inputs.rows }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workers Used**: ${{ github.event.inputs.max_workers }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Memory Limit**: ${{ github.event.inputs.max_memory_mb }} MB" >> $GITHUB_STEP_SUMMARY
+
+  # Job for issue-based file upload
+  run-script-issue:
+    if: github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'data-upload')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Extract parameters from issue
+        id: extract-params
+        run: |
+          # Extract parameters from issue body using regex
+          ISSUE_BODY="${{ github.event.issue.body }}"
+          
+          # Extract file URL (look for JSON URLs)
+          FILE_URL=$(echo "$ISSUE_BODY" | grep -oE 'https?://[^[:space:]]+\.json' | head -1)
+          if [ -z "$FILE_URL" ]; then
+            # Try to find raw GitHub URLs or gist URLs
+            FILE_URL=$(echo "$ISSUE_BODY" | grep -oE 'https?://[^[:space:]]+' | grep -E '(raw\.githubusercontent|gist\.githubusercontent)' | head -1)
+          fi
+          
+          # Extract rows (default to 10)
+          ROWS=$(echo "$ISSUE_BODY" | grep -oE 'rows?[[:space:]]*:?[[:space:]]*([0-9]+)' | grep -oE '[0-9]+' | head -1)
+          ROWS=${ROWS:-10}
+          
+          # Extract workers (default to 4)
+          WORKERS=$(echo "$ISSUE_BODY" | grep -oE 'workers?[[:space:]]*:?[[:space:]]*([0-9]+)' | grep -oE '[0-9]+' | head -1)
+          WORKERS=${WORKERS:-4}
+          
+          # Extract memory (default to 1024)
+          MEMORY=$(echo "$ISSUE_BODY" | grep -oE 'memory[[:space:]]*:?[[:space:]]*([0-9]+)' | grep -oE '[0-9]+' | head -1)
+          MEMORY=${MEMORY:-1024}
+          
+          echo "file_url=$FILE_URL" >> $GITHUB_OUTPUT
+          echo "rows=$ROWS" >> $GITHUB_OUTPUT
+          echo "workers=$WORKERS" >> $GITHUB_OUTPUT
+          echo "memory=$MEMORY" >> $GITHUB_OUTPUT
+          
+          echo "Extracted parameters:"
+          echo "- File URL: $FILE_URL"
+          echo "- Rows: $ROWS"
+          echo "- Workers: $WORKERS" 
+          echo "- Memory: $MEMORY MB"
+
+      - name: Download file from issue
+        run: |
+          FILE_URL="${{ steps.extract-params.outputs.file_url }}"
+          if [ -z "$FILE_URL" ]; then
+            echo "❌ No valid JSON file URL found in issue body"
+            echo "Please provide a direct link to a JSON file in your issue."
+            exit 1
+          fi
+          
+          echo "Downloading file from: $FILE_URL"
+          curl -L -o input.json "$FILE_URL"
+
+      - name: Validate JSON format
+        run: |
+          python -c "
+          import json
+          try:
+              with open('input.json', 'r') as f:
+                  json.load(f)
+              print('✅ JSON file is valid')
+          except json.JSONDecodeError as e:
+              print(f'❌ Invalid JSON file: {e}')
+              exit(1)
+          except Exception as e:
+              print(f'❌ Error reading file: {e}')
+              exit(1)
+          "
+
+      - name: Run DataGenerator
+        run: python main.py -c input.json -r ${{ steps.extract-params.outputs.rows }} --enable_all_features --output_dir output_files -f csv -w ${{ steps.extract-params.outputs.workers }} -m ${{ steps.extract-params.outputs.memory }}
+
+      - name: Upload output folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-folder-issue-${{ github.event.issue.number }}
+          path: output_files/
+
+      - name: Comment on issue with results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Get output files info
+            let outputInfo = '';
+            if (fs.existsSync('output_files')) {
+              const files = fs.readdirSync('output_files');
+              outputInfo = files.map(f => `- ${f}`).join('\n');
+            }
+            
+            const comment = `## 🎉 DataGenerator Run Completed!
+            
+            **Run Details:**
+            - **Trigger**: Issue #${{ github.event.issue.number }}
+            - **File URL**: ${{ steps.extract-params.outputs.file_url }}
+            - **Rows Generated**: ${{ steps.extract-params.outputs.rows }}
+            - **Workers Used**: ${{ steps.extract-params.outputs.workers }}
+            - **Memory Used**: ${{ steps.extract-params.outputs.memory }} MB
+            
+            **Output Files:**
+            ${outputInfo}
+            
+            📎 **Download Results**: Check the [Actions artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for output files.
+            
+            ---
+            *This comment was generated automatically by the DataGenerator workflow.*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  # Job for pull request based file upload
+  run-script-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Find uploaded JSON files
+        id: find-files
+        run: |
+          # Find all JSON files in uploads directory
+          JSON_FILES=$(find uploads/ -name "*.json" -type f 2>/dev/null || echo "")
+          
+          if [ -z "$JSON_FILES" ]; then
+            echo "❌ No JSON files found in uploads/ directory"
+            exit 1
+          fi
+          
+          # Use the first JSON file found
+          FIRST_FILE=$(echo "$JSON_FILES" | head -1)
+          echo "input_file=$FIRST_FILE" >> $GITHUB_OUTPUT
+          
+          echo "Found JSON files:"
+          echo "$JSON_FILES"
+          echo "Using file: $FIRST_FILE"
+
+      - name: Prepare input file
+        run: |
+          cp "${{ steps.find-files.outputs.input_file }}" input.json
+          echo "Using uploaded file: ${{ steps.find-files.outputs.input_file }}"
+
+      - name: Check input file
+        run: |
+          echo "Input file details:"
+          ls -lh input.json
+          echo "First 20 lines of input.json:"
+          head -n 20 input.json
+
+      - name: Validate JSON format
+        run: |
+          python -c "
+          import json
+          try:
+              with open('input.json', 'r') as f:
+                  json.load(f)
+              print('✅ JSON file is valid')
+          except json.JSONDecodeError as e:
+              print(f'❌ Invalid JSON file: {e}')
+              exit(1)
+          except Exception as e:
+              print(f'❌ Error reading file: {e}')
+              exit(1)
+          "
+
+      - name: Run DataGenerator with default parameters
+        run: python main.py -c input.json -r 10 --enable_all_features --output_dir output_files -f csv -w 4 -m 1024
+
+      - name: Upload output folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-folder-pr-${{ github.event.pull_request.number }}
+          path: output_files/
+
+      - name: Comment on PR with results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            // Get output files info
+            let outputInfo = '';
+            if (fs.existsSync('output_files')) {
+              const files = fs.readdirSync('output_files');
+              outputInfo = files.map(f => `- ${f}`).join('\n');
+            }
+            
+            const comment = `## 🎉 DataGenerator Run Completed!
+            
+            **Run Details:**
+            - **Trigger**: Pull Request #${{ github.event.pull_request.number }}
+            - **Input File**: ${{ steps.find-files.outputs.input_file }}
+            - **Rows Generated**: 10 (default)
+            - **Workers Used**: 4 (default)
+            - **Memory Used**: 1024 MB (default)
+            
+            **Output Files:**
+            ${outputInfo}
+            
+            📎 **Download Results**: Check the [Actions artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for output files.
+            
+            ---
+            *This comment was generated automatically by the DataGenerator workflow.*`;
+            
+            github.rest.pulls.createReview({
+              pull_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment,
+              event: 'COMMENT'
+            });
