@@ -1062,31 +1062,44 @@ def main(config: GenerationConfig, total_records: int = None) -> Dict[str, List]
     return orchestrator.run_data_generation(actual_total_records)
 
 
-def setup_logging(config: GenerationConfig) -> logging.Logger:
-    """Setup optimized logging based on configuration"""
-    log_level = getattr(logging, config.logging.level.upper(), logging.INFO)
-    log_format = config.logging.format
+def setup_logging_with_fallback(config: GenerationConfig = None, log_level: str = "INFO") -> logging.Logger:
+    """Setup logging with fallback to defaults when config is not available"""
 
-    # Enhanced log format with more context
-    enhanced_format = "%(asctime)s | %(levelname)-8s | %(name)-10s | %(message)s"
-    if hasattr(config.logging, 'enhanced_format') and config.logging.enhanced_format:
-        log_format = enhanced_format
+    if config and hasattr(config, 'logging'):
+        # Use configuration-based logging
+        log_level_final = getattr(logging, config.logging.level.upper(), logging.INFO)
+        log_format = config.logging.format
 
-    # Configure logging with multiple handlers
-    handlers = [logging.StreamHandler(sys.stdout)]
+        # Enhanced log format with more context
+        enhanced_format = "%(asctime)s | %(levelname)-8s | %(name)-10s | %(message)s"
+        if hasattr(config.logging, 'enhanced_format') and config.logging.enhanced_format:
+            log_format = enhanced_format
 
-    if config.logging.file_path:
-        log_dir = os.path.dirname(config.logging.file_path)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
+        # Configure logging with multiple handlers
+        handlers = [logging.StreamHandler(sys.stdout)]
 
-        file_handler = logging.FileHandler(config.logging.file_path)
-        file_handler.setFormatter(logging.Formatter(log_format))
-        handlers.append(file_handler)
+        if config.logging.file_path:
+            log_dir = os.path.dirname(config.logging.file_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+
+            file_handler = logging.FileHandler(config.logging.file_path)
+            file_handler.setFormatter(logging.Formatter(log_format))
+            handlers.append(file_handler)
+    else:
+        # Fallback to basic logging
+        log_level_final = getattr(logging, log_level.upper(), logging.INFO)
+        log_format = "%(asctime)s | %(levelname)-8s | %(message)s"
+        handlers = [logging.StreamHandler(sys.stdout)]
+
+    # Clear existing handlers to avoid duplication
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
 
     # Configure root logger
     logging.basicConfig(
-        level=log_level,
+        level=log_level_final,
         format=log_format,
         handlers=handlers,
         force=True
@@ -1096,7 +1109,13 @@ def setup_logging(config: GenerationConfig) -> logging.Logger:
     logging.getLogger('faker').setLevel(logging.WARNING)
     logging.getLogger('pandas').setLevel(logging.WARNING)
 
-    return logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
+    if config:
+        logger.info("📋 Configuration-based logging applied")
+    else:
+        logger.info("🔧 Fallback logging configured")
+
+    return logger
 
 
 def parse_arguments():
@@ -1183,7 +1202,7 @@ Features:
                         help='Enable strict validation mode')
     parser.add_argument('--log_level',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                        help='Logging level')
+                        help='Logging level', default='INFO')
 
     # AI Integration arguments
     parser.add_argument('--ai_enabled', action='store_true',
@@ -1338,8 +1357,12 @@ if __name__ == "__main__":
         # Parse command line arguments
         args = parse_arguments()
 
+        initial_log_level = getattr(args, 'log_level', 'INFO')
+        logger = setup_logging_with_fallback(config=None, log_level=initial_log_level)
+
         # Load and configure
-        config_manager = ConfigurationManager()
+        config_manager = ConfigurationManager(logger=logger)
+
         config = config_manager.load_configuration(
             config_path=args.config,
             environment=getattr(args, 'environment', None),
@@ -1367,8 +1390,10 @@ if __name__ == "__main__":
         # Apply command line overrides
         apply_command_line_overrides(config, args)
 
+        logger = setup_logging_with_fallback(config=config)
+        config_manager.logger = logger
+
         # Setup logging
-        logger = setup_logging(config)
 
         # Log configuration summary
         logger.info("📋 Optimized Configuration Summary:")
