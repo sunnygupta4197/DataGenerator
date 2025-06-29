@@ -51,7 +51,7 @@ class AIProviderManager:
         from .mistral_provider import MistralProvider
 
         # Initialize OpenAI if configured
-        if hasattr(self.ai_config, 'openai') and self.ai_config.openai:
+        if hasattr(self.ai_config, 'openai') and self.ai_config.openai.enabled:
             try:
                 openai_provider = OpenAIProvider(self.logger, self.ai_config.openai)
                 if openai_provider.is_available():
@@ -62,7 +62,7 @@ class AIProviderManager:
                 self.logger.error(f"Failed to initialize OpenAI provider: {e}")
 
         # Initialize Mistral if configured
-        if hasattr(self.ai_config, 'mistral') and self.ai_config.mistral:
+        if hasattr(self.ai_config, 'mistral') and self.ai_config.mistral.enabled:
             try:
                 mistral_provider = MistralProvider(self.logger, self.ai_config.mistral)
                 if mistral_provider.is_available():
