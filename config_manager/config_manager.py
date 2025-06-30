@@ -26,6 +26,16 @@ class AIProvider(Enum):
     OPENAI = "openai"
     MISTRAL = "mistral"
 
+    @classmethod
+    def all(cls):
+        """Get all providers as list"""
+        return list(cls)
+
+    @classmethod
+    def values(cls):
+        """Get all provider values as list"""
+        return [provider.value for provider in cls]
+
 
 @dataclass
 class DatabaseConfig:
@@ -483,20 +493,20 @@ class AIConfig:
         if self.mistral is None:
             self.mistral = MistralConfig()
 
-    def get_active_providers(self) -> List[str]:
+    def get_active_providers(self) -> list[AIProvider]:
         """Get list of enabled AI providers"""
         providers = []
         if self.openai and self.openai.enabled:
-            providers.append("openai")
+            providers.append(AIProvider.OPENAI)
         if self.mistral and self.mistral.enabled:
-            providers.append("mistral")
+            providers.append(AIProvider.MISTRAL)
         return providers
 
     def get_primary_provider_config(self):
         """Get configuration for primary provider"""
-        if self.primary_provider == "openai":
+        if self.primary_provider == AIProvider.OPENAI:
             return self.openai
-        elif self.primary_provider == "mistral":
+        elif self.primary_provider == AIProvider.MISTRAL:
             return self.mistral
         return None
 
@@ -911,7 +921,7 @@ class GenerationConfig:
             return issues
 
         # Validate primary provider setting
-        if self.ai.primary_provider not in [AIProvider.OPENAI, AIProvider.MISTRAL]:
+        if self.ai.primary_provider not in AIProvider.all():
             issues.append(f"Invalid primary provider: {self.ai.primary_provider}")
 
         # Validate OpenAI configuration
@@ -1432,11 +1442,11 @@ class ConfigurationManager:
             for provider in config.ai.get_active_providers():
                 connection_result = self.test_ai_connection(config, provider)
                 if connection_result['status'] == 'success':
-                    self.logger.info(f"✅ {provider.upper()} connection test successful")
+                    self.logger.info(f"✅ {provider.value.upper()} connection test successful")
                 elif connection_result['status'] == 'error':
-                    self.logger.warning(f"⚠️  {provider.upper()} connection failed: {connection_result['message']}")
+                    self.logger.warning(f"⚠️  {provider.value.upper()} connection failed: {connection_result['message']}")
                 else:
-                    self.logger.info(f"ℹ️  {provider.upper()}: {connection_result['message']}")
+                    self.logger.info(f"ℹ️  {provider.value.upper()}: {connection_result['message']}")
 
     def _apply_argument_overrides(self, raw_config: Dict[str, Any], **overrides) -> Dict[str, Any]:
         """
@@ -1543,7 +1553,7 @@ class ConfigurationManager:
             available_ai = self._check_available_ai_providers()
             if available_ai:
                 sources_info = self._get_key_sources_summary(available_ai)
-                self.logger.info(f"🤖 Found AI providers: {', '.join(available_ai.keys())}")
+                self.logger.info(f"🤖 Found AI providers: {', '.join([provider.value for provider in available_ai.keys()])}")
             else:
                 self.logger.warning("🔑 No AI keys found - will enable all other features")
 
@@ -1557,10 +1567,10 @@ class ConfigurationManager:
                     key_source = info['key_source']
                     model = info.get('recommended_model', 'default')
                     if info.get('validation_passed', False):
-                        self.logger.info(f"   🔑 {provider.upper()}: {key_source} → {model}")
+                        self.logger.info(f"   🔑 {provider.value.upper()}: {key_source} → {model}")
                     else:
                         error = info.get('error', 'unknown error')
-                        self.logger.warning(f"   ⚠️  {provider.upper()}: {key_source} (error: {error})")
+                        self.logger.warning(f"   ⚠️  {provider.value.upper()}: {key_source} (error: {error})")
             else:
                 self.logger.info("✅ All non-AI features enabled (no AI keys available)")
                 self.logger.info("💡 To enable AI features, add keys via:")
@@ -1576,7 +1586,7 @@ class ConfigurationManager:
 
         return config
 
-    def _get_key_sources_summary(self, available_providers: Dict[str, Dict[str, Any]]) -> str:
+    def _get_key_sources_summary(self, available_providers: Dict[AIProvider, Dict[str, Any]]) -> str:
         """Get a readable summary of where keys were found"""
         sources = []
         for provider, info in available_providers.items():
@@ -1611,7 +1621,7 @@ class ConfigurationManager:
         if config.ai:
             active_providers = config.ai.get_active_providers()
             if active_providers:
-                validation_results.append(f"✅ AI successfully enabled: {', '.join(active_providers)}")
+                validation_results.append(f"✅ AI successfully enabled: {', '.join([provider.value for provider in active_providers])}")
             else:
                 # Check if this is expected (no keys available)
                 available_providers = self._check_available_ai_providers()
@@ -1622,19 +1632,19 @@ class ConfigurationManager:
 
         return validation_results
 
-    def _check_available_ai_providers(self, config: Dict[str, Any] = None) -> Dict[str, Dict[str, Any]]:
+    def _check_available_ai_providers(self, config: Dict[str, Any] = None) -> dict[AIProvider, dict[str, Any]]:
         """Check which AI providers have valid keys available from ALL sources"""
         available = {}
 
         # Check OpenAI from all sources
-        openai_info = self._check_provider_availability('openai', config)
+        openai_info = self._check_provider_availability(AIProvider.OPENAI, config)
         if openai_info:
-            available['openai'] = openai_info
+            available[AIProvider.OPENAI] = openai_info
 
         # Check Mistral from all sources
-        mistral_info = self._check_provider_availability('mistral', config)
+        mistral_info = self._check_provider_availability(AIProvider.MISTRAL, config)
         if mistral_info:
-            available['mistral'] = mistral_info
+            available[AIProvider.MISTRAL] = mistral_info
 
         return available
 
@@ -1651,7 +1661,7 @@ class ConfigurationManager:
             old_value = config['ai'].get('primary_provider', 'not set')
             new_provider = overrides['ai_primary_provider']
 
-            valid_providers = ["openai", "mistral"]
+            valid_providers = AIProvider.values()
             if new_provider in valid_providers:
                 config['ai']['primary_provider'] = new_provider
                 applied_overrides.append(f"ai.primary_provider: {old_value} → {new_provider}")
@@ -1764,14 +1774,14 @@ class ConfigurationManager:
 
         return ai_overrides
 
-    def _check_provider_availability(self, provider: str, config: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+    def _check_provider_availability(self, provider: AIProvider, config: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """Check if a specific provider has valid keys from any source"""
-        if provider == 'openai':
+        if provider == AIProvider.OPENAI:
             env_var = 'OPENAI_API_KEY'
             config_path = ['ai', 'openai']
             key_validator = lambda key: key.startswith('sk-') and len(key.strip()) >= 20
             recommended_model = 'gpt-3.5-turbo'
-        elif provider == 'mistral':
+        elif provider == AIProvider.MISTRAL:
             env_var = 'MISTRAL_API_KEY'
             config_path = ['ai', 'mistral']
             key_validator = lambda key: len(key.strip()) >= 20 and not key.startswith('sk-')
@@ -1860,7 +1870,7 @@ class ConfigurationManager:
 
         return current
 
-    def _select_optimal_primary_provider(self, available_providers: Dict[str, Dict]) -> AIProvider:
+    def _select_optimal_primary_provider(self, available_providers: Dict[AIProvider, Dict]) -> AIProvider:
         """Select the best primary provider for 'enable_all_features'"""
         # Preference order for "all features" mode
         preference_order = [AIProvider.MISTRAL, AIProvider.OPENAI]
@@ -1871,7 +1881,7 @@ class ConfigurationManager:
 
         return AIProvider.OPENAI
 
-    def _configure_optimal_ai_setup(self, config: Dict[str, Any], available_providers: Dict[str, Dict]) -> List[str]:
+    def _configure_optimal_ai_setup(self, config: Dict[str, Any], available_providers: Dict[AIProvider, Dict]) -> List[str]:
         """Configure AI with optimal settings for 'enable_all_features'"""
         ai_overrides = []
 
@@ -1892,7 +1902,7 @@ class ConfigurationManager:
 
         # Log success
         provider_names = list(available_providers.keys())
-        ai_overrides.append(f"🤖 AI enabled with providers: {', '.join(provider_names)}")
+        ai_overrides.append(f"🤖 AI enabled with providers: {', '.join([provider.value for provider in provider_names])}")
 
         return ai_overrides
 
@@ -2363,20 +2373,19 @@ class ConfigurationManager:
             return
 
         # Validate primary provider
-        valid_providers = ["openai", "mistral"]
-        if ai_config.primary_provider not in valid_providers:
+        if ai_config.primary_provider not in AIProvider.all():
             errors.append(
-                f"AI: Invalid primary provider '{ai_config.primary_provider}'. Valid options: {valid_providers}")
+                f"AI: Invalid primary provider '{ai_config.primary_provider}'. Valid options: {AIProvider.all()}")
 
         # Validate OpenAI configuration if enabled
         if ai_config.openai and ai_config.openai.enabled:
-            openai_errors, openai_warnings = self._validate_provider_config(ai_config.openai, "OpenAI")
+            openai_errors, openai_warnings = self._validate_provider_config(ai_config.openai, AIProvider.OPENAI)
             errors.extend(openai_errors)
             warnings.extend(openai_warnings)
 
         # Validate Mistral configuration if enabled
         if ai_config.mistral and ai_config.mistral.enabled:
-            mistral_errors, mistral_warnings = self._validate_provider_config(ai_config.mistral, "Mistral")
+            mistral_errors, mistral_warnings = self._validate_provider_config(ai_config.mistral, AIProvider.MISTRAL)
             errors.extend(mistral_errors)
             warnings.extend(mistral_warnings)
 
@@ -2390,7 +2399,7 @@ class ConfigurationManager:
         if primary_config and not primary_config.enabled:
             warnings.append(f"AI: Primary provider '{ai_config.primary_provider}' is not enabled")
 
-    def _validate_provider_config(self, provider_config, provider_name: str) -> tuple[List[str], List[str]]:
+    def _validate_provider_config(self, provider_config, provider_name: AIProvider) -> tuple[List[str], List[str]]:
         """Validate individual AI provider configuration"""
         errors = []
         warnings = []
@@ -2403,7 +2412,7 @@ class ConfigurationManager:
             warnings.append(f"{provider_name}: API key seems too short, please verify")
 
         # Validate model name based on provider
-        if provider_name == "OpenAI":
+        if provider_name == AIProvider.OPENAI:
             valid_models = ['gpt-3.5-turbo', 'gpt-3.5-turbo-16k', 'gpt-4', 'gpt-4-turbo-preview', 'gpt-4-32k']
         else:  # Mistral
             valid_models = ['mistral-tiny', 'mistral-small', 'mistral-medium', 'mistral-large']
@@ -2418,7 +2427,7 @@ class ConfigurationManager:
             warnings.append(f"{provider_name}: max_tokens > 4096 may be expensive and slow")
 
         # Temperature validation (different ranges for different providers)
-        temp_max = 2.0 if provider_name == "OpenAI" else 1.0
+        temp_max = 2.0 if provider_name == AIProvider.OPENAI else 1.0
         if not (0.0 <= provider_config.temperature <= temp_max):
             errors.append(f"{provider_name}: temperature must be between 0.0 and {temp_max}")
 
@@ -2494,7 +2503,7 @@ class ConfigurationManager:
 
     # ===================== AI PROVIDER UTILITIES =====================
 
-    def test_ai_connection(self, config: GenerationConfig, provider: str = None) -> Dict[str, Any]:
+    def test_ai_connection(self, config: GenerationConfig, provider: AIProvider = None) -> Dict[str, Any]:
         """Test AI provider connection and return status"""
         if provider == AIProvider.OPENAI:
             return self._test_openai_connection(config.ai.openai)
@@ -2646,15 +2655,15 @@ class ConfigurationManager:
 
         # Get OpenAI status
         if config.ai.openai:
-            status['providers']['openai'] = self._get_provider_status(config.ai.openai, 'OpenAI')
+            status['providers']['openai'] = self._get_provider_status(config.ai.openai, AIProvider.OPENAI)
 
         # Get Mistral status
         if config.ai.mistral:
-            status['providers']['mistral'] = self._get_provider_status(config.ai.mistral, 'Mistral')
+            status['providers']['mistral'] = self._get_provider_status(config.ai.mistral, AIProvider.MISTRAL)
 
         return status
 
-    def _get_provider_status(self, provider_config, provider_name: str) -> Dict[str, Any]:
+    def _get_provider_status(self, provider_config, provider_name: AIProvider) -> Dict[str, Any]:
         """Get status for individual AI provider"""
         status = {
             'enabled': provider_config.enabled,
@@ -2720,13 +2729,13 @@ class ConfigurationManager:
             if template_type == "basic":
                 config.ai = AIConfig(
                     openai=OpenAIConfig(
-                        enabled=(primary_provider == "openai"),
+                        enabled=(primary_provider == AIProvider.OPENAI),
                         model="gpt-3.5-turbo",
                         cache_size=50,
                         cost_limit_usd=5.0
                     ),
                     mistral=MistralConfig(
-                        enabled=(primary_provider == "mistral"),
+                        enabled=(primary_provider == AIProvider.MISTRAL),
                         model="mistral-small",
                         cache_size=50,
                         cost_limit_usd=3.0
@@ -2931,14 +2940,14 @@ class ConfigurationManager:
 
             # Primary provider selection
             if provider_choice == "3":
-                primary = input("Primary AI provider (openai/mistral) [openai]: ").strip() or "openai"
+                primary = input("Primary AI provider (openai/mistral) [openai]: ").strip() or AIProvider.OPENAI
                 ai_config.primary_provider = primary
                 ai_config.enable_fallback = input(
                     "Enable fallback to secondary provider (y/n) [y]: ").strip().lower() in ['y', 'yes', '']
             elif provider_choice == "1":
-                ai_config.primary_provider = "openai"
+                ai_config.primary_provider = AIProvider.OPENAI
             elif provider_choice == "2":
-                ai_config.primary_provider = "mistral"
+                ai_config.primary_provider = AIProvider.MISTRAL
 
         output_config = OutputConfig(format=output_format)
         if output_dir != "./output":
@@ -2992,7 +3001,7 @@ class ConfigurationManager:
             if cost_estimates:
                 print(f"💰 Estimated costs for ~{estimated_requests} AI requests:")
                 for provider, cost in cost_estimates.items():
-                    print(f"   {provider.name.upper()}: ~${cost:.4f}")
+                    print(f"   {provider.value.upper()}: ~${cost:.4f}")
 
                 total_cost = sum(cost_estimates.values())
                 if total_cost > 10.0:
@@ -3008,9 +3017,9 @@ class ConfigurationManager:
                 if provider in ai_status['active_providers']:
                     current_model = ai_status['providers'][provider]['model']
                     if current_model == model:
-                        print(f"   {provider.name.upper()}: {model} ✅ (currently selected)")
+                        print(f"   {provider.value.upper()}: {model} ✅ (currently selected)")
                     else:
-                        print(f"   {provider.name.upper()}: {model} (you selected: {current_model})")
+                        print(f"   {provider.value.upper()}: {model} (you selected: {current_model})")
 
         return config
 
@@ -3609,17 +3618,17 @@ class ConfigurationManager:
             )
         )
 
-        if provider == "openai" or enable_fallback:
+        if provider == AIProvider.OPENAI or enable_fallback:
             config.ai.openai = OpenAIConfig(
-                enabled=(provider == "openai"),
+                enabled=(provider == AIProvider.OPENAI),
                 model="gpt-3.5-turbo",
                 cache_size=50,
                 cost_limit_usd=5.0
             )
 
-        if provider == "mistral" or enable_fallback:
+        if provider == AIProvider.MISTRAL or enable_fallback:
             config.ai.mistral = MistralConfig(
-                enabled=(provider == "mistral"),
+                enabled=(provider == AIProvider.MISTRAL),
                 model="mistral-small",
                 cache_size=50,
                 cost_limit_usd=3.0
@@ -3658,9 +3667,9 @@ class ConfigurationManager:
 
     # ===================== AI PROVIDER MANAGEMENT =====================
 
-    def list_available_ai_models(self, provider: str) -> List[str]:
+    def list_available_ai_models(self, provider: AIProvider) -> List[str]:
         """List available models for an AI provider"""
-        if provider == "openai":
+        if provider == AIProvider.OPENAI:
             return [
                 'gpt-3.5-turbo',
                 'gpt-3.5-turbo-16k',
@@ -3668,7 +3677,7 @@ class ConfigurationManager:
                 'gpt-4-turbo-preview',
                 'gpt-4-32k'
             ]
-        elif provider == "mistral":
+        elif provider == AIProvider.MISTRAL:
             return [
                 'mistral-tiny',
                 'mistral-small',
