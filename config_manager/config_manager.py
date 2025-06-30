@@ -134,6 +134,9 @@ class SecurityConfig:
         if self.auto_detect_pii and not self.sensitivity_map:
             self.sensitivity_map.update(self._get_default_sensitivity_map())
 
+        if self.enable_encryption and self.key_source == "environment" and not self.encryption_key:
+            pass
+
         # Apply compliance profile settings
         if self.compliance_profile:
             self._apply_compliance_profile()
@@ -316,6 +319,25 @@ class SecurityConfig:
 
         return issues
 
+    def has_valid_encryption_key(self) -> bool:
+        """Check if a valid encryption key is available"""
+        if self.encryption_key and len(self.encryption_key.strip()) >= 32:
+            return True
+
+        if self.encryption_key_file and os.path.exists(self.encryption_key_file):
+            try:
+                with open(self.encryption_key_file, 'r') as f:
+                    key = f.read().strip()
+                    return len(key) >= 32
+            except:
+                return False
+
+        env_key = os.getenv(self.key_env_var)
+        if env_key and len(env_key.strip()) >= 32:
+            return True
+
+        return False
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
         return {
@@ -450,7 +472,7 @@ class AIConfig:
     """Master AI configuration supporting multiple providers"""
     openai: Optional[OpenAIConfig] = None
     mistral: Optional[MistralConfig] = None
-    primary_provider: str = "openai"  # "openai" or "mistral"
+    primary_provider: AIProvider = AIProvider.OPENAI
     enable_fallback: bool = True
     shared_cache_size: int = 200  # Shared cache for all AI providers
 
@@ -480,11 +502,11 @@ class AIConfig:
 
     def switch_primary_provider(self, provider: str) -> bool:
         """Switch primary provider"""
-        if provider == "openai" and self.openai and self.openai.enabled:
-            self.primary_provider = "openai"
+        if provider == AIProvider.OPENAI and self.openai and self.openai.enabled:
+            self.primary_provider = AIProvider.OPENAI
             return True
-        elif provider == "mistral" and self.mistral and self.mistral.enabled:
-            self.primary_provider = "mistral"
+        elif provider == AIProvider.MISTRAL and self.mistral and self.mistral.enabled:
+            self.primary_provider = AIProvider.MISTRAL
             return True
         return False
 
@@ -889,8 +911,7 @@ class GenerationConfig:
             return issues
 
         # Validate primary provider setting
-        valid_providers = ["openai", "mistral"]
-        if self.ai.primary_provider not in valid_providers:
+        if self.ai.primary_provider not in [AIProvider.OPENAI, AIProvider.MISTRAL]:
             issues.append(f"Invalid primary provider: {self.ai.primary_provider}")
 
         # Validate OpenAI configuration
@@ -1063,7 +1084,7 @@ class ConfigurationManager:
                     cache_size=50,
                     cost_limit_usd=3.0
                 ),
-                primary_provider="openai"
+                primary_provider=AIProvider.OPENAI
             ),
             validation=ValidationConfig(
                 strict_mode=False,
@@ -1098,7 +1119,7 @@ class ConfigurationManager:
                     cache_size=100,
                     cost_limit_usd=8.0
                 ),
-                primary_provider="mistral"
+                primary_provider=AIProvider.MISTRAL
             ),
             validation=ValidationConfig(
                 strict_mode=True,
@@ -1138,7 +1159,7 @@ class ConfigurationManager:
                     timeout_seconds=60,
                     retry_attempts=5
                 ),
-                primary_provider="mistral",
+                primary_provider=AIProvider.MISTRAL,
                 enable_fallback=True
             ),
             validation=ValidationConfig(
@@ -1263,6 +1284,10 @@ class ConfigurationManager:
         # Apply environment variables (lowest priority)
         config = self._apply_environment_variables(config)
 
+        encryption_configured = self.auto_configure_encryption(config)
+        if not encryption_configured and config.security.enable_encryption:
+            self.logger.warning("⚠️  Encryption was requested but had to be disabled due to missing encryption key")
+
         if config.ai and config.ai.get_active_providers():
             self._validate_ai_configuration_comprehensive(config)
 
@@ -1310,6 +1335,78 @@ class ConfigurationManager:
         except Exception as e:
             self.logger.error(f"❌ Failed to change output directory: {e}")
             return False
+
+    def auto_configure_encryption(self, config: GenerationConfig) -> bool:
+        """
+        Automatically configure encryption based on available keys and environment.
+        Returns True if encryption was successfully configured, False otherwise.
+        """
+        if not config.security.enable_encryption:
+            return True  # Encryption not requested, nothing to configure
+
+        # Check for encryption key availability in order of priority
+        encryption_key = None
+        key_source = None
+
+        # 1. Direct encryption key (highest priority)
+        if config.security.encryption_key:
+            encryption_key = config.security.encryption_key
+            key_source = "direct_config"
+
+        # 2. Encryption key file
+        elif config.security.encryption_key_file and os.path.exists(config.security.encryption_key_file):
+            try:
+                with open(config.security.encryption_key_file, 'r') as f:
+                    file_key = f.read().strip()
+                    if file_key:
+                        encryption_key = file_key
+                        key_source = f"file ({config.security.encryption_key_file})"
+            except (IOError, PermissionError) as e:
+                self.logger.warning(f"🔐 Cannot read encryption key file: {e}")
+
+        # 3. Environment variable (lowest priority)
+        elif os.getenv(config.security.key_env_var):
+            encryption_key = os.getenv(config.security.key_env_var)
+            key_source = f"environment ({config.security.key_env_var})"
+
+        # 4. Auto-generate key if in development and no key found
+        # elif config.environment == Environment.DEVELOPMENT.value:
+        #     encryption_key = self._generate_encryption_key()
+        #     key_source = "auto_generated"
+        #     config.security.encryption_key = encryption_key
+        #     self.logger.info("🔐 Auto-generated encryption key for development environment")
+
+        # Validate encryption configuration
+        if not encryption_key:
+            self.logger.warning("🔐 Encryption requested but no key available - disabling encryption")
+            config.security.enable_encryption = False
+            return False
+
+        # Validate key strength (basic check)
+        if len(encryption_key.strip()) < 32:
+            self.logger.warning("🔐 Encryption key seems too short (< 32 chars) - disabling encryption")
+            config.security.enable_encryption = False
+            return False
+
+        # Configure encryption settings
+        config.security.encryption_key = encryption_key
+
+        self.logger.info(f"🔐 Encryption configured successfully (key source: {key_source})")
+
+        # Set appropriate algorithm if not specified
+        if not config.security.encryption_algorithm:
+            config.security.encryption_algorithm = "AES-256-GCM"
+
+        return True
+
+    def _generate_encryption_key(self) -> str:
+        """Generate a secure encryption key for development use"""
+        import secrets
+        import base64
+
+        # Generate 32 random bytes and encode as base64
+        key_bytes = secrets.token_bytes(32)
+        return base64.b64encode(key_bytes).decode('utf-8')
 
     def _validate_ai_configuration_comprehensive(self, config: GenerationConfig):
         """Comprehensive AI configuration validation with user feedback"""
@@ -1763,17 +1860,16 @@ class ConfigurationManager:
 
         return current
 
-    def _select_optimal_primary_provider(self, available_providers: Dict[str, Dict]) -> str:
+    def _select_optimal_primary_provider(self, available_providers: Dict[str, Dict]) -> AIProvider:
         """Select the best primary provider for 'enable_all_features'"""
         # Preference order for "all features" mode
-        preference_order = ['mistral', 'openai']  # Mistral often better price/performance
+        preference_order = [AIProvider.MISTRAL, AIProvider.OPENAI]
 
         for preferred in preference_order:
-            if preferred in available_providers:
+            if preferred.value in available_providers:
                 return preferred
 
-        # Fallback to first available
-        return list(available_providers.keys())[0] if available_providers else 'openai'
+        return AIProvider.OPENAI
 
     def _configure_optimal_ai_setup(self, config: Dict[str, Any], available_providers: Dict[str, Dict]) -> List[str]:
         """Configure AI with optimal settings for 'enable_all_features'"""
@@ -1781,48 +1877,6 @@ class ConfigurationManager:
 
         # Determine primary provider preference
         primary_provider = self._select_optimal_primary_provider(available_providers)
-
-        # Configure OpenAI if available
-        if 'openai' in available_providers:
-            if 'openai' not in config['ai']:
-                config['ai']['openai'] = {}
-
-            openai_config = {
-                'enabled': True,
-                'model': 'gpt-3.5-turbo',  # Reliable for all features
-                'max_tokens': 4000,  # Higher for complex tasks
-                'cache_size': 200,  # Larger cache
-                'cost_limit_usd': 50.0,  # Higher limit for all features
-                'temperature': 0.3,  # Lower for more consistent results
-                'timeout_seconds': 60,  # Longer timeout
-                'retry_attempts': 5  # More retries
-            }
-
-            for key, value in openai_config.items():
-                old_value = config['ai']['openai'].get(key, 'not set')
-                config['ai']['openai'][key] = value
-                ai_overrides.append(f"ai.openai.{key}: {old_value} → {value}")
-
-        # Configure Mistral if available
-        if 'mistral' in available_providers:
-            if 'mistral' not in config['ai']:
-                config['ai']['mistral'] = {}
-
-            mistral_config = {
-                'enabled': True,
-                'model': 'mistral-medium',  # Better model for all features
-                'max_tokens': 4000,
-                'cache_size': 200,
-                'cost_limit_usd': 40.0,
-                'temperature': 0.3,
-                'timeout_seconds': 60,
-                'retry_attempts': 5
-            }
-
-            for key, value in mistral_config.items():
-                old_value = config['ai']['mistral'].get(key, 'not set')
-                config['ai']['mistral'][key] = value
-                ai_overrides.append(f"ai.mistral.{key}: {old_value} → {value}")
 
         # Configure AI-level settings
         ai_level_config = {
@@ -1857,6 +1911,11 @@ class ConfigurationManager:
 
         # Stage 2: Schema Structure and Capacity Validation
         schema_errors, capacity_errors = self._validate_schema_and_capacity(config, raw_config)
+
+        if not self.auto_configure_encryption(config):
+            self.logger.info("🔐 Encryption auto-configuration completed (disabled due to missing key)")
+        else:
+            self.logger.info("🔐 Encryption auto-configuration completed (enabled)")
 
         if capacity_errors:
             self._log_capacity_errors(capacity_errors, config)
@@ -2038,12 +2097,11 @@ class ConfigurationManager:
         if 'ai' in config_dict:
             nested_configs['ai'] = self._parse_ai_config(config_dict.pop('ai'))
         elif 'openai' in config_dict:
-            # Backward compatibility: convert old openai config to new ai config
             openai_data = config_dict.pop('openai')
             nested_configs['ai'] = AIConfig(
                 openai=OpenAIConfig(**openai_data),
                 mistral=MistralConfig(),
-                primary_provider="openai"
+                primary_provider=AIProvider.OPENAI
             )
 
         if 'output' in config_dict:
@@ -2438,37 +2496,12 @@ class ConfigurationManager:
 
     def test_ai_connection(self, config: GenerationConfig, provider: str = None) -> Dict[str, Any]:
         """Test AI provider connection and return status"""
-        if not config.ai:
-            return {
-                'status': 'disabled',
-                'message': 'AI integration is disabled in configuration'
-            }
-
-        # Determine which provider to test
-        if provider:
-            if provider == "openai":
-                return self._test_openai_connection(config.ai.openai)
-            elif provider == "mistral":
-                return self._test_mistral_connection(config.ai.mistral)
-            else:
-                return {
-                    'status': 'error',
-                    'message': f'Unknown provider: {provider}'
-                }
+        if provider == AIProvider.OPENAI:
+            return self._test_openai_connection(config.ai.openai)
+        elif provider == AIProvider.MISTRAL:
+            return self._test_mistral_connection(config.ai.mistral)
         else:
-            # Test primary provider
-            primary_provider = config.ai.primary_provider
-            primary_config = config.ai.get_primary_provider_config()
-
-            if primary_provider == "openai":
-                return self._test_openai_connection(primary_config)
-            elif primary_provider == "mistral":
-                return self._test_mistral_connection(primary_config)
-            else:
-                return {
-                    'status': 'error',
-                    'message': f'Invalid primary provider: {primary_provider}'
-                }
+            return {'status': 'error', 'message': f'Unknown provider: {provider}'}
 
     def _test_openai_connection(self, openai_config: OpenAIConfig) -> Dict[str, Any]:
         """Test OpenAI connection"""
@@ -2679,7 +2712,7 @@ class ConfigurationManager:
     def generate_config_template_with_ai(self, table_schemas: List[Dict[str, Any]],
                                          template_type: str = "basic",
                                          enable_ai: bool = False,
-                                         primary_provider: str = "openai") -> GenerationConfig:
+                                         primary_provider: AIProvider = AIProvider.OPENAI) -> GenerationConfig:
         """Generate configuration template with AI settings"""
         config = self.generate_config_template(table_schemas, template_type)
 
@@ -2959,7 +2992,7 @@ class ConfigurationManager:
             if cost_estimates:
                 print(f"💰 Estimated costs for ~{estimated_requests} AI requests:")
                 for provider, cost in cost_estimates.items():
-                    print(f"   {provider.upper()}: ~${cost:.4f}")
+                    print(f"   {provider.name.upper()}: ~${cost:.4f}")
 
                 total_cost = sum(cost_estimates.values())
                 if total_cost > 10.0:
@@ -2975,9 +3008,9 @@ class ConfigurationManager:
                 if provider in ai_status['active_providers']:
                     current_model = ai_status['providers'][provider]['model']
                     if current_model == model:
-                        print(f"   {provider.upper()}: {model} ✅ (currently selected)")
+                        print(f"   {provider.name.upper()}: {model} ✅ (currently selected)")
                     else:
-                        print(f"   {provider.upper()}: {model} (you selected: {current_model})")
+                        print(f"   {provider.name.upper()}: {model} (you selected: {current_model})")
 
         return config
 
@@ -3144,17 +3177,17 @@ class ConfigurationManager:
         config.ai = AIConfig(
             openai=OpenAIConfig(
                 enabled=False,
-                model=model_recommendations.get("openai", "gpt-3.5-turbo"),
+                model=model_recommendations.get(AIProvider.OPENAI, "gpt-3.5-turbo"),
                 cache_size=100,
                 cost_limit_usd=15.0
             ),
             mistral=MistralConfig(
                 enabled=False,
-                model=model_recommendations.get("mistral", "mistral-small"),
+                model=model_recommendations.get(AIProvider.MISTRAL, "mistral-small"),
                 cache_size=100,
                 cost_limit_usd=12.0
             ),
-            primary_provider="openai"
+            primary_provider=AIProvider.OPENAI
         )
 
         # Add foreign key relationships
@@ -3216,7 +3249,7 @@ class ConfigurationManager:
                 retry_attempts=5,
                 fallback_enabled=True
             ),
-            primary_provider="mistral",
+            primary_provider=AIProvider.MISTRAL,
             enable_fallback=True
         )
 
@@ -3472,7 +3505,7 @@ class ConfigurationManager:
         if not config.ai:
             config.ai = AIConfig()
 
-        if provider == "openai":
+        if provider == AIProvider.OPENAI:
             if not config.ai.openai:
                 config.ai.openai = OpenAIConfig()
 
@@ -3485,7 +3518,7 @@ class ConfigurationManager:
             self.logger.info(f"OpenAI enabled with model: {config.ai.openai.model}")
             return True
 
-        elif provider == "mistral":
+        elif provider == AIProvider.MISTRAL:
             if not config.ai.mistral:
                 config.ai.mistral = MistralConfig()
 
@@ -3504,22 +3537,15 @@ class ConfigurationManager:
 
     def disable_ai_provider(self, config: GenerationConfig, provider: str) -> bool:
         """Disable an AI provider"""
-        if not config.ai:
-            return False
-
-        if provider == "openai" and config.ai.openai:
+        if provider == AIProvider.OPENAI and config.ai.openai:
             config.ai.openai.enabled = False
             self.logger.info("OpenAI disabled")
             return True
-
-        elif provider == "mistral" and config.ai.mistral:
+        elif provider == AIProvider.MISTRAL and config.ai.mistral:
             config.ai.mistral.enabled = False
             self.logger.info("Mistral AI disabled")
             return True
-
-        else:
-            self.logger.error(f"Unknown AI provider: {provider}")
-            return False
+        return False
 
     def get_ai_cost_summary(self, config: GenerationConfig) -> Dict[str, Any]:
         """Get AI cost summary and limits"""
@@ -3570,7 +3596,7 @@ class ConfigurationManager:
 
         return results
 
-    def create_minimal_ai_config(self, provider: str = "openai",
+    def create_minimal_ai_config(self, provider: AIProvider = AIProvider.OPENAI,
                                  enable_fallback: bool = True) -> GenerationConfig:
         """Create minimal configuration with AI enabled"""
         config = GenerationConfig(
@@ -3652,31 +3678,31 @@ class ConfigurationManager:
         else:
             return []
 
-    def get_ai_model_recommendations(self, use_case: str = "general") -> Dict[str, str]:
+    def get_ai_model_recommendations(self, use_case: str = "general") -> dict[AIProvider, str]:
         """Get AI model recommendations based on use case"""
         recommendations = {
             "general": {
-                "openai": "gpt-3.5-turbo",
-                "mistral": "mistral-small"
+                AIProvider.OPENAI: "gpt-3.5-turbo",
+                AIProvider.MISTRAL: "mistral-small"
             },
             "cost_effective": {
-                "openai": "gpt-3.5-turbo",
-                "mistral": "mistral-tiny"
+                AIProvider.OPENAI: "gpt-3.5-turbo",
+                AIProvider.MISTRAL: "mistral-tiny"
             },
             "high_quality": {
-                "openai": "gpt-4",
-                "mistral": "mistral-large"
+                AIProvider.OPENAI: "gpt-4",
+                AIProvider.MISTRAL: "mistral-large"
             },
             "production": {
-                "openai": "gpt-3.5-turbo",
-                "mistral": "mistral-medium"
+                AIProvider.OPENAI: "gpt-3.5-turbo",
+                AIProvider.MISTRAL: "mistral-medium"
             }
         }
 
         return recommendations.get(use_case, recommendations["general"])
 
     def estimate_ai_costs(self, config: GenerationConfig,
-                          estimated_requests: int = 100) -> Dict[str, float]:
+                          estimated_requests: int = 100) -> dict[AIProvider, float]:
         """Estimate AI costs based on configuration and usage"""
         costs = {}
 
@@ -3684,15 +3710,16 @@ class ConfigurationManager:
             return costs
 
         # Cost per 1K tokens (approximate)
+
         cost_rates = {
-            "openai": {
+            AIProvider.OPENAI: {
                 "gpt-3.5-turbo": 0.002,
                 "gpt-3.5-turbo-16k": 0.003,
                 "gpt-4": 0.03,
                 "gpt-4-turbo-preview": 0.01,
                 "gpt-4-32k": 0.06
             },
-            "mistral": {
+            AIProvider.MISTRAL: {
                 "mistral-tiny": 0.0002,
                 "mistral-small": 0.0006,
                 "mistral-medium": 0.0027,
@@ -3705,15 +3732,15 @@ class ConfigurationManager:
 
         if config.ai.openai and config.ai.openai.enabled:
             model = config.ai.openai.model
-            rate = cost_rates["openai"].get(model, 0.002)
+            rate = cost_rates[AIProvider.OPENAI].get(model, 0.002)
             estimated_cost = (estimated_requests * tokens_per_request / 1000) * rate
-            costs["openai"] = round(estimated_cost, 4)
+            costs[AIProvider.OPENAI] = round(estimated_cost, 4)
 
         if config.ai.mistral and config.ai.mistral.enabled:
             model = config.ai.mistral.model
-            rate = cost_rates["mistral"].get(model, 0.0006)
+            rate = cost_rates[AIProvider.MISTRAL].get(model, 0.0006)
             estimated_cost = (estimated_requests * tokens_per_request / 1000) * rate
-            costs["mistral"] = round(estimated_cost, 4)
+            costs[AIProvider.MISTRAL] = round(estimated_cost, 4)
 
         return costs
 
