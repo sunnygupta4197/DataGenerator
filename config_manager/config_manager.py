@@ -1291,6 +1291,10 @@ class ConfigurationManager:
             old_directory = config.output.directory
             old_report_directory = config.output.report_directory
 
+            if old_report_directory == old_directory:
+                self.logger.info(f"No change in the output directory")
+                return True
+
             config.output.change_directory(new_directory, cleanup_old=cleanup_old)
 
             self.logger.info(f"📁 Successfully changed output directory:")
