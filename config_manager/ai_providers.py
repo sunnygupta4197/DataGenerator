@@ -47,6 +47,10 @@ class BaseProviderConfig(ABC):
     def get_valid_models(self) -> List[str]:
         pass
 
+    @abstractmethod
+    def get_recommendations(self, use_case: str = "general") -> str:
+        pass
+
     def get_api_key(self) -> Optional[str]:
         """Universal API key getter"""
         if self.api_key:
@@ -73,7 +77,16 @@ class OpenAIConfig(BaseProviderConfig):
         return "gpt-3.5-turbo"
 
     def get_valid_models(self) -> List[str]:
-        return ['gpt-3.5-turbo', 'gpt-3.5-turbo-16k', 'gpt-4', 'gpt-4-turbo-preview']
+        return ['gpt-3.5-turbo', 'gpt-3.5-turbo-16k', 'gpt-4', 'gpt-4-turbo-preview', 'gpt-4-32k']
+
+    def get_recommendations(self, use_case: str = "general") -> str:
+        recommendation = {
+            "general": "gpt-3.5-turbo",
+            "cost_effective": "gpt-3.5-turbo",
+            "high_quality": "gpt-4",
+            "production": "gpt-3.5-turbo"
+        }
+        return recommendation.get(use_case, recommendation["general"])
 
 
 @dataclass
@@ -86,6 +99,16 @@ class MistralConfig(BaseProviderConfig):
 
     def get_valid_models(self) -> List[str]:
         return ['mistral-tiny', 'mistral-small', 'mistral-medium', 'mistral-large']
+
+    def get_recommendations(self, use_case: str = "general") -> str:
+        recommendation = {
+            "general": "mistral-small",
+            "cost_effective": "mistral-tiny",
+            "high_quality": "mistral-large",
+            "production": "mistral-medium"
+        }
+
+        return recommendation.get(use_case, recommendation["general"])
 
 
 class AIProviderRegistry:
@@ -138,6 +161,10 @@ class AIConfig:
     mistral: Optional[MistralConfig] = None
 
     def __post_init__(self):
+        if self.openai is None:
+            self.openai = OpenAIConfig()
+        if self.mistral is None:
+            self.mistral = MistralConfig()
         # Initialize all provider configs if not provided
         for provider in AIProviderRegistry.get_all_providers():
             if provider not in self._provider_configs:
@@ -178,3 +205,52 @@ class AIConfig:
     def get_primary_provider_config(self) -> BaseProviderConfig:
         """Get primary provider config"""
         return self.get_provider_config(self.primary_provider)
+
+    def get_provider_recommendations(self, use_case="general") -> str:
+        """Get primary provider config"""
+        return self.get_provider_config(self.primary_provider).get_recommendations(use_case=use_case)
+
+    def is_openai_enabled(self) -> bool:
+        """Safely check if OpenAI is enabled"""
+        return self.openai is not None and self.openai.enabled
+
+    def is_mistral_enabled(self) -> bool:
+        """Safely check if Mistral is enabled"""
+        return self.mistral is not None and self.mistral.enabled
+
+    def get_openai_model(self) -> Optional[str]:
+        """Safely get OpenAI model"""
+        return self.openai.model if self.openai else None
+
+    def get_mistral_model(self) -> Optional[str]:
+        """Safely get Mistral model"""
+        return self.mistral.model if self.mistral else None
+
+    def get_enabled_providers(self) -> List[AIProvider]:
+        """Get list of actually enabled providers (safe)"""
+        enabled = []
+        if self.is_openai_enabled():
+            enabled.append(AIProvider.OPENAI)
+        if self.is_mistral_enabled():
+            enabled.append(AIProvider.MISTRAL)
+        return enabled
+
+    def has_any_enabled_provider(self) -> bool:
+        """Check if any AI provider is enabled"""
+        return self.is_openai_enabled() or self.is_mistral_enabled()
+
+    def get_primary_provider_safely(self) -> Optional[BaseProviderConfig]:
+        """Safely get primary provider config"""
+        if self.primary_provider == AIProvider.OPENAI and self.openai:
+            return self.openai
+        elif self.primary_provider == AIProvider.MISTRAL and self.mistral:
+            return self.mistral
+
+        # Fallback to any available provider
+        if self.openai and self.openai.enabled:
+            return self.openai
+        elif self.mistral and self.mistral.enabled:
+            return self.mistral
+
+        return None
+
