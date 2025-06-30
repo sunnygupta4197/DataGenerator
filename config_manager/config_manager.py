@@ -493,8 +493,8 @@ class AIConfig:
 class OutputConfig:
     """Output configuration"""
     format: str = "csv"
-    directory: str = "./output"
-    report_directory = f'{directory}/reports'
+    directory: str = "./output/{timestamp}"
+    report_directory: str = f'{directory}/reports'
     filename_template: str = "{table_name}_{timestamp}"
     compression: Optional[str] = None
     encoding: str = "utf-8"
@@ -540,7 +540,7 @@ class OutputConfig:
     def __post_init__(self):
         """Validate output configuration and setup directory"""
         self._setup_output_directory()
-    
+
     def _setup_output_directory(self):
         """Setup output directory"""
         valid_formats = ["csv", "json", "jsonl", "parquet", "sql_query", "xlsx", "dsv", "fixed", "fwf"]
@@ -558,7 +558,7 @@ class OutputConfig:
                 os.makedirs(self.report_directory, exist_ok=True)
             except Exception as e:
                 print(f"Warning: Could not create output directory {self.directory}: {e}")
-                
+
     def change_directory(self, new_directory: str, cleanup_old: bool = True):
         """Change output directory and optionally cleanup_old one"""
         old_directory = getattr(self, 'directory', None)
@@ -1246,22 +1246,73 @@ class ConfigurationManager:
         # Parse configuration with overrides applied
         config = self._parse_config_dict(raw_config)
 
+        # If enable_all_features was used, validate the result
+        if enable_all_features:
+            validation_results = self._validate_enable_all_features_result(config)
+            for result in validation_results:
+                self.logger.info(result)
+
         # Apply environment-specific overrides
         if environment:
+            if not self.validate_environment_config(environment):
+                available_envs = self.list_available_environments()
+                self.logger.warning(f"⚠️  Unknown environment '{environment}'. Available: {', '.join(available_envs)}")
+
             config = self._apply_environment_overrides(config, environment)
 
         # Apply environment variables (lowest priority)
         config = self._apply_environment_variables(config)
 
+        if config.ai and config.ai.get_active_providers():
+            self._validate_ai_configuration_comprehensive(config)
+
         # Comprehensive validation including capacity checks
         self._validate_configuration_comprehensive(config, raw_config)
 
+        if config.debug_mode:
+            summary = self.get_config_summary(config)
+            self.logger.info("📋 Configuration Summary:")
+            self.logger.info(f"   Environment: {summary['environment']}")
+            self.logger.info(f"   Tables: {summary['total_tables']}, Rows: {summary['total_rows']:,}")
+            self.logger.info(f"   AI Enabled: {summary.get('ai', {}).get('enabled', False)}")
+            if summary.get('ai', {}).get('enabled'):
+                self.logger.info(f"   Primary Provider: {summary['ai']['primary_provider']}")
 
         # Cache configuration
         cache_key = f"{config_path}:{environment or 'default'}:{hash(str(sorted(kwargs.items())))}"
         self.config_cache[cache_key] = config
 
         return config
+
+    def _validate_ai_configuration_comprehensive(self, config: GenerationConfig):
+        """Comprehensive AI configuration validation with user feedback"""
+        self.logger.info("🤖 Validating AI configuration...")
+
+        # Validate API keys
+        key_validation = self.validate_ai_keys(config)
+        ai_issues = []
+
+        for provider, status in key_validation.items():
+            if not status['available']:
+                ai_issues.append(f"{provider.upper()}: No API key found")
+                self.logger.warning(f"🔑 {provider.upper()} API key not available")
+            elif not status['valid_length']:
+                ai_issues.append(f"{provider.upper()}: API key seems invalid (too short)")
+                self.logger.warning(f"🔑 {provider.upper()} API key seems invalid (too short)")
+            else:
+                self.logger.info(f"🔑 {provider.upper()} API key found and appears valid")
+
+        # Test connections only in debug mode (to avoid API costs during normal config loading)
+        if config.debug_mode and not ai_issues:
+            self.logger.info("🔗 Testing AI connections (debug mode)...")
+            for provider in config.ai.get_active_providers():
+                connection_result = self.test_ai_connection(config, provider)
+                if connection_result['status'] == 'success':
+                    self.logger.info(f"✅ {provider.upper()} connection test successful")
+                elif connection_result['status'] == 'error':
+                    self.logger.warning(f"⚠️  {provider.upper()} connection failed: {connection_result['message']}")
+                else:
+                    self.logger.info(f"ℹ️  {provider.upper()}: {connection_result['message']}")
 
     def _apply_argument_overrides(self, raw_config: Dict[str, Any], **overrides) -> Dict[str, Any]:
         """
@@ -1346,8 +1397,15 @@ class ConfigurationManager:
             if 'output' not in config:
                 config['output'] = {}
             old_value = config['output'].get('directory', 'not set')
-            config['output']['directory'] = overrides['output_dir']
-            applied_overrides.append(f"output.directory: {old_value} → {overrides['output_dir']}")
+            temp_output = OutputConfig(**config['output'])
+            temp_output.change_directory(overrides['output_dir'])
+
+            # Update config with new values
+            config['output']['directory'] = temp_output.directory
+            config['output']['report_directory'] = temp_output.report_directory
+
+            applied_overrides.append(f"output.directory: {old_value} → {temp_output.directory}")
+            applied_overrides.append(f"output.report_directory: auto-updated → {temp_output.report_directory}")
 
         # AI overrides
         ai_updates = self._apply_ai_overrides(config, overrides)
@@ -1355,8 +1413,36 @@ class ConfigurationManager:
 
         # Enable all features override
         if overrides.get('enable_all_features'):
+            self.logger.info("🚀 enable_all_features requested - checking AI availability...")
+
+            # Pre-check AI availability
+            available_ai = self._check_available_ai_providers()
+            if available_ai:
+                sources_info = self._get_key_sources_summary(available_ai)
+                self.logger.info(f"🤖 Found AI providers: {', '.join(available_ai.keys())}")
+            else:
+                self.logger.warning("🔑 No AI keys found - will enable all other features")
+
             all_features_updates = self._enable_all_features(config)
             applied_overrides.extend(all_features_updates)
+
+            # Provide feedback about AI status
+            if available_ai:
+                self.logger.info(f"✅ All features enabled including AI ({len(available_ai)} provider(s))")
+                for provider, info in available_ai.items():
+                    key_source = info['key_source']
+                    model = info.get('recommended_model', 'default')
+                    if info.get('validation_passed', False):
+                        self.logger.info(f"   🔑 {provider.upper()}: {key_source} → {model}")
+                    else:
+                        error = info.get('error', 'unknown error')
+                        self.logger.warning(f"   ⚠️  {provider.upper()}: {key_source} (error: {error})")
+            else:
+                self.logger.info("✅ All non-AI features enabled (no AI keys available)")
+                self.logger.info("💡 To enable AI features, add keys via:")
+                self.logger.info("   - Config file: 'ai.openai.api_key' or 'ai.mistral.api_key'")
+                self.logger.info("   - Environment: OPENAI_API_KEY or MISTRAL_API_KEY")
+                self.logger.info("   - Key files: Set 'api_key_file' paths in config")
 
         # Log applied overrides
         if applied_overrides:
@@ -1365,6 +1451,68 @@ class ConfigurationManager:
                 self.logger.info(f"  - {override}")
 
         return config
+
+    def _get_key_sources_summary(self, available_providers: Dict[str, Dict[str, Any]]) -> str:
+        """Get a readable summary of where keys were found"""
+        sources = []
+        for provider, info in available_providers.items():
+            source = info['key_source']
+
+            # Simplify source names for readability
+            if source.startswith('config.'):
+                simplified_source = 'config'
+            elif source.startswith('file'):
+                simplified_source = 'file'
+            elif source.startswith('environment'):
+                simplified_source = 'env'
+            else:
+                simplified_source = source
+
+            sources.append(f"{provider}({simplified_source})")
+
+        return ", ".join(sources)
+
+    def _validate_enable_all_features_result(self, config: 'GenerationConfig') -> List[str]:
+        """Validate that enable_all_features worked correctly"""
+        validation_results = []
+
+        # Check if core features are enabled
+        if not config.performance.enable_streaming:
+            validation_results.append("⚠️  Streaming not enabled despite enable_all_features")
+
+        if not config.security.enable_data_masking:
+            validation_results.append("⚠️  Data masking not enabled despite enable_all_features")
+
+        # Check AI status
+        if config.ai:
+            active_providers = config.ai.get_active_providers()
+            if active_providers:
+                validation_results.append(f"✅ AI successfully enabled: {', '.join(active_providers)}")
+            else:
+                # Check if this is expected (no keys available)
+                available_providers = self._check_available_ai_providers()
+                if available_providers:
+                    validation_results.append("⚠️  AI providers available but not enabled")
+                else:
+                    validation_results.append("ℹ️  AI not enabled (no API keys found) - this is expected")
+
+        return validation_results
+
+    def _check_available_ai_providers(self, config: Dict[str, Any] = None) -> Dict[str, Dict[str, Any]]:
+        """Check which AI providers have valid keys available from ALL sources"""
+        available = {}
+
+        # Check OpenAI from all sources
+        openai_info = self._check_provider_availability('openai', config)
+        if openai_info:
+            available['openai'] = openai_info
+
+        # Check Mistral from all sources
+        mistral_info = self._check_provider_availability('mistral', config)
+        if mistral_info:
+            available['mistral'] = mistral_info
+
+        return available
 
     def _apply_ai_overrides(self, config: Dict[str, Any], overrides: Dict[str, Any]) -> List[str]:
         """Apply AI-specific overrides"""
@@ -1377,38 +1525,42 @@ class ConfigurationManager:
         # AI primary provider override
         if overrides.get('ai_primary_provider') is not None:
             old_value = config['ai'].get('primary_provider', 'not set')
-            config['ai']['primary_provider'] = overrides['ai_primary_provider']
-            applied_overrides.append(f"ai.primary_provider: {old_value} → {overrides['ai_primary_provider']}")
+            new_provider = overrides['ai_primary_provider']
 
-        # OpenAI overrides
-        if any(k in overrides for k in ['openai_enabled', 'openai_model']):
+            valid_providers = ["openai", "mistral"]
+            if new_provider in valid_providers:
+                config['ai']['primary_provider'] = new_provider
+                applied_overrides.append(f"ai.primary_provider: {old_value} → {new_provider}")
+            else:
+                applied_overrides.append(f"ai.primary_provider: INVALID '{new_provider}' (valid: {valid_providers})")
+                self.logger.warning(f"Invalid AI provider '{new_provider}'. Valid options: {valid_providers}")
+
+        # Enhanced provider enabling with validation
+        if overrides.get('openai_enabled') is not None:
             if 'openai' not in config['ai']:
                 config['ai']['openai'] = {}
 
-            if overrides.get('openai_enabled') is not None:
-                old_value = config['ai']['openai'].get('enabled', 'not set')
-                config['ai']['openai']['enabled'] = overrides['openai_enabled']
-                applied_overrides.append(f"ai.openai.enabled: {old_value} → {overrides['openai_enabled']}")
+            old_value = config['ai']['openai'].get('enabled', 'not set')
+            config['ai']['openai']['enabled'] = overrides['openai_enabled']
+            applied_overrides.append(f"ai.openai.enabled: {old_value} → {overrides['openai_enabled']}")
 
-            if overrides.get('openai_model') is not None:
-                old_value = config['ai']['openai'].get('model', 'not set')
-                config['ai']['openai']['model'] = overrides['openai_model']
-                applied_overrides.append(f"ai.openai.model: {old_value} → {overrides['openai_model']}")
+            # If enabling, check for API key
+            if overrides['openai_enabled'] and not os.getenv('OPENAI_API_KEY'):
+                applied_overrides.append(
+                    "ai.openai.enabled: WARNING - No OPENAI_API_KEY environment variable found")
 
-        # Mistral overrides
-        if any(k in overrides for k in ['mistral_enabled', 'mistral_model']):
+        if overrides.get('mistral_enabled') is not None:
             if 'mistral' not in config['ai']:
                 config['ai']['mistral'] = {}
 
-            if overrides.get('mistral_enabled') is not None:
-                old_value = config['ai']['mistral'].get('enabled', 'not set')
-                config['ai']['mistral']['enabled'] = overrides['mistral_enabled']
-                applied_overrides.append(f"ai.mistral.enabled: {old_value} → {overrides['mistral_enabled']}")
+            old_value = config['ai']['mistral'].get('enabled', 'not set')
+            config['ai']['mistral']['enabled'] = overrides['mistral_enabled']
+            applied_overrides.append(f"ai.mistral.enabled: {old_value} → {overrides['mistral_enabled']}")
 
-            if overrides.get('mistral_model') is not None:
-                old_value = config['ai']['mistral'].get('model', 'not set')
-                config['ai']['mistral']['model'] = overrides['mistral_model']
-                applied_overrides.append(f"ai.mistral.model: {old_value} → {overrides['mistral_model']}")
+            # If enabling, check for API key
+            if overrides['mistral_enabled'] and not os.getenv('MISTRAL_API_KEY'):
+                applied_overrides.append(
+                    "ai.mistral.enabled: WARNING - No MISTRAL_API_KEY environment variable found")
 
         return applied_overrides
 
@@ -1460,8 +1612,208 @@ class ConfigurationManager:
             config['validation'][key] = value
             applied_overrides.append(f"validation.{key}: {old_value} → {value}")
 
+        ai_overrides = self._enable_ai_features_smartly(config)
+        applied_overrides.extend(ai_overrides)
+
         applied_overrides.append("🚀 All features enabled")
         return applied_overrides
+
+    def _enable_ai_features_smartly(self, config: Dict[str, Any]) -> List[str]:
+        """Smart AI features enabling - only enable if keys are available"""
+        ai_overrides = []
+
+        if 'ai' not in config:
+            config['ai'] = {}
+
+        # Check what AI providers can actually be enabled
+        available_providers = self._check_available_ai_providers()
+
+        if not available_providers:
+            # No AI keys available
+            ai_overrides.append("ai: No API keys found - AI features skipped")
+            self.logger.warning("🔑 enable_all_features: No AI API keys found, skipping AI features")
+            self.logger.info("💡 To enable AI: Set OPENAI_API_KEY or MISTRAL_API_KEY environment variables")
+            return ai_overrides
+
+        # At least one provider is available - configure AI optimally
+        ai_overrides.extend(self._configure_optimal_ai_setup(config, available_providers))
+
+        return ai_overrides
+
+    def _check_provider_availability(self, provider: str, config: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+        """Check if a specific provider has valid keys from any source"""
+        if provider == 'openai':
+            env_var = 'OPENAI_API_KEY'
+            config_path = ['ai', 'openai']
+            key_validator = lambda key: key.startswith('sk-') and len(key.strip()) >= 20
+            recommended_model = 'gpt-3.5-turbo'
+        elif provider == 'mistral':
+            env_var = 'MISTRAL_API_KEY'
+            config_path = ['ai', 'mistral']
+            key_validator = lambda key: len(key.strip()) >= 20 and not key.startswith('sk-')
+            recommended_model = 'mistral-medium'
+        else:
+            return None
+
+        # Source 1: Direct config key (highest priority)
+        api_key, key_source = self._get_api_key_from_config(config, config_path)
+        if api_key and key_validator(api_key):
+            return {
+                'key_source': key_source,
+                'key_valid': True,
+                'recommended_model': recommended_model,
+                'api_key_length': len(api_key),
+                'validation_passed': True
+            }
+
+        # Source 2: API key file
+        api_key_file = self._get_config_value(config, config_path + ['api_key_file'])
+        if api_key_file and os.path.exists(api_key_file):
+            try:
+                with open(api_key_file, 'r') as f:
+                    file_key = f.read().strip()
+                    if file_key and key_validator(file_key):
+                        return {
+                            'key_source': f'file ({api_key_file})',
+                            'key_valid': True,
+                            'recommended_model': recommended_model,
+                            'api_key_length': len(file_key),
+                            'validation_passed': True
+                        }
+            except (IOError, PermissionError) as e:
+                # File exists but can't read it
+                return {
+                    'key_source': f'file ({api_key_file}) - ERROR',
+                    'key_valid': False,
+                    'error': str(e),
+                    'validation_passed': False
+                }
+
+        # Source 3: Environment variable (lowest priority)
+        env_key = os.getenv(env_var)
+        if env_key and key_validator(env_key):
+            return {
+                'key_source': f'environment ({env_var})',
+                'key_valid': True,
+                'recommended_model': recommended_model,
+                'api_key_length': len(env_key),
+                'validation_passed': True
+            }
+
+        # No valid key found in any source
+        return None
+
+    def _get_api_key_from_config(self, config: Dict[str, Any], config_path: List[str]) -> Tuple[Optional[str], str]:
+        """Get API key from config with source tracking"""
+        if not config:
+            return None, 'no_config'
+
+        # Navigate to the provider config
+        current = config
+        for path_part in config_path:
+            if not isinstance(current, dict) or path_part not in current:
+                return None, 'path_not_found'
+            current = current[path_part]
+
+        # Check for direct api_key
+        if isinstance(current, dict) and current.get('api_key'):
+            api_key = current['api_key']
+            if isinstance(api_key, str) and api_key.strip():
+                return api_key.strip(), f'config.{".".join(config_path)}.api_key'
+
+        return None, 'not_in_config'
+
+    def _get_config_value(self, config: Dict[str, Any], path: List[str]) -> Any:
+        """Safely get nested config value"""
+        if not config:
+            return None
+
+        current = config
+        for path_part in path:
+            if not isinstance(current, dict) or path_part not in current:
+                return None
+            current = current[path_part]
+
+        return current
+
+    def _select_optimal_primary_provider(self, available_providers: Dict[str, Dict]) -> str:
+        """Select the best primary provider for 'enable_all_features'"""
+        # Preference order for "all features" mode
+        preference_order = ['mistral', 'openai']  # Mistral often better price/performance
+
+        for preferred in preference_order:
+            if preferred in available_providers:
+                return preferred
+
+        # Fallback to first available
+        return list(available_providers.keys())[0] if available_providers else 'openai'
+
+    def _configure_optimal_ai_setup(self, config: Dict[str, Any], available_providers: Dict[str, Dict]) -> List[str]:
+        """Configure AI with optimal settings for 'enable_all_features'"""
+        ai_overrides = []
+
+        # Determine primary provider preference
+        primary_provider = self._select_optimal_primary_provider(available_providers)
+
+        # Configure OpenAI if available
+        if 'openai' in available_providers:
+            if 'openai' not in config['ai']:
+                config['ai']['openai'] = {}
+
+            openai_config = {
+                'enabled': True,
+                'model': 'gpt-3.5-turbo',  # Reliable for all features
+                'max_tokens': 4000,  # Higher for complex tasks
+                'cache_size': 200,  # Larger cache
+                'cost_limit_usd': 50.0,  # Higher limit for all features
+                'temperature': 0.3,  # Lower for more consistent results
+                'timeout_seconds': 60,  # Longer timeout
+                'retry_attempts': 5  # More retries
+            }
+
+            for key, value in openai_config.items():
+                old_value = config['ai']['openai'].get(key, 'not set')
+                config['ai']['openai'][key] = value
+                ai_overrides.append(f"ai.openai.{key}: {old_value} → {value}")
+
+        # Configure Mistral if available
+        if 'mistral' in available_providers:
+            if 'mistral' not in config['ai']:
+                config['ai']['mistral'] = {}
+
+            mistral_config = {
+                'enabled': True,
+                'model': 'mistral-medium',  # Better model for all features
+                'max_tokens': 4000,
+                'cache_size': 200,
+                'cost_limit_usd': 40.0,
+                'temperature': 0.3,
+                'timeout_seconds': 60,
+                'retry_attempts': 5
+            }
+
+            for key, value in mistral_config.items():
+                old_value = config['ai']['mistral'].get(key, 'not set')
+                config['ai']['mistral'][key] = value
+                ai_overrides.append(f"ai.mistral.{key}: {old_value} → {value}")
+
+        # Configure AI-level settings
+        ai_level_config = {
+            'primary_provider': primary_provider,
+            'enable_fallback': len(available_providers) > 1,  # Enable fallback if multiple providers
+            'shared_cache_size': 400  # Larger shared cache
+        }
+
+        for key, value in ai_level_config.items():
+            old_value = config['ai'].get(key, 'not set')
+            config['ai'][key] = value
+            ai_overrides.append(f"ai.{key}: {old_value} → {value}")
+
+        # Log success
+        provider_names = list(available_providers.keys())
+        ai_overrides.append(f"🤖 AI enabled with providers: {', '.join(provider_names)}")
+
+        return ai_overrides
 
     def _validate_configuration_comprehensive(self, config: 'GenerationConfig', raw_config: Dict[str, Any]):
         """
@@ -1706,7 +2058,10 @@ class ConfigurationManager:
                                      environment: str) -> GenerationConfig:
         """Apply environment-specific configuration overrides"""
         if environment not in self.environment_configs:
+            available_envs = self.list_available_environments()
             self.logger.warning(f"Unknown environment: {environment}")
+            self.logger.warning(f"Available environments: {', '.join(available_envs)}")
+            self.logger.warning("Continuing with base configuration...")
             return config
 
         env_config = self.environment_configs[environment]
@@ -1803,8 +2158,15 @@ class ConfigurationManager:
                     else:
                         converted_value = data_type(env_value)
 
-                    # Set nested configuration value
-                    self._set_nested_config_value(config, config_path, converted_value)
+                    if config_path == 'output.directory':
+                        success = self.update_output_directory(config, converted_value, cleanup_old=False)
+                        if success:
+                            self.logger.info(f"🌍 Environment override: {env_var} applied")
+                        else:
+                            self.logger.warning(f"🌍 Environment override: {env_var} failed to apply")
+                    else:
+                        # Set nested configuration value
+                        self._set_nested_config_value(config, config_path, converted_value)
 
                 except (ValueError, TypeError) as e:
                     self.logger.warning(f"Invalid environment variable {env_var}={env_value}: {e}")
@@ -1869,6 +2231,30 @@ class ConfigurationManager:
         # Validation settings validation
         if config.validation.quality_threshold < 0 or config.validation.quality_threshold > 1:
             errors.append("Quality threshold must be between 0 and 1")
+
+        if not config.output.directory:
+            errors.append("Output directory must be specified")
+        else:
+            # Check if directory can be created
+            try:
+                # Test directory creation without actually creating it
+                from pathlib import Path
+                output_path = Path(config.output.directory)
+
+                # Check parent directory is writable
+                parent_dir = output_path.parent
+                if not parent_dir.exists():
+                    warnings.append(f"Parent directory does not exist: {parent_dir}")
+                elif not os.access(parent_dir, os.W_OK):
+                    errors.append(f"No write permission for parent directory: {parent_dir}")
+
+                # Check report directory too
+                report_path = Path(config.output.report_directory)
+                if not report_path.parent.exists():
+                    warnings.append(f"Report directory parent does not exist: {report_path.parent}")
+
+            except Exception as e:
+                warnings.append(f"Could not validate output directory: {e}")
 
         # Table schema validation
         for i, table in enumerate(config.tables):
@@ -2343,13 +2729,28 @@ class ConfigurationManager:
                            include_sensitive: bool = False):
         """Save configuration to file with option to exclude sensitive data"""
         output_path = Path(output_path)
+        if not config.output.directory or not Path(config.output.directory).exists():
+            self.logger.warning("⚠️  Output directory doesn't exist, recreating...")
+            # Trigger directory creation
+            config.output._setup_output_directory()
 
         # Convert config to dictionary
         config_dict = self._config_to_dict(config, include_sensitive)
 
         self._save_json(config_dict, output_path)
 
-        self.logger.info(f"Configuration saved to: {output_path}")
+        self.logger.info(f"💾 Configuration saved to: {output_path}")
+        self.logger.info(f"📁 Output will be saved to: {config.output.directory}")
+        self.logger.info(f"📊 Reports will be saved to: {config.output.report_directory}")
+
+        summary = self.get_config_summary(config)
+        self.logger.info(
+            f"📋 Summary: {summary['total_tables']} tables, {summary['total_rows']:,} rows, {summary['output_format']} format")
+
+        if summary.get('ai', {}).get('enabled'):
+            active_providers = summary['ai']['active_providers']
+            self.logger.info(
+                f"🤖 AI: {summary['ai']['primary_provider']} primary, {len(active_providers)} active provider(s)")
 
     def _config_to_dict(self, config: GenerationConfig, include_sensitive: bool = False) -> Dict[str, Any]:
         """Convert configuration object to dictionary with option to exclude sensitive data"""
@@ -2479,6 +2880,10 @@ class ConfigurationManager:
             elif provider_choice == "2":
                 ai_config.primary_provider = "mistral"
 
+        output_config = OutputConfig(format=output_format)
+        if output_dir != "./output":
+            output_config.change_directory(output_dir)
+
         # Create configuration
         config = GenerationConfig(
             environment=environment,
@@ -2519,6 +2924,33 @@ class ConfigurationManager:
                     print("  Errors:")
                     for error in provider_status['errors']:
                         print(f"    - {error}")
+
+            print("\n--- Cost Estimation ---")
+            estimated_requests = max(rows // 1000, 10)  # Estimate based on data size
+            cost_estimates = self.estimate_ai_costs(config, estimated_requests)
+
+            if cost_estimates:
+                print(f"💰 Estimated costs for ~{estimated_requests} AI requests:")
+                for provider, cost in cost_estimates.items():
+                    print(f"   {provider.upper()}: ~${cost:.4f}")
+
+                total_cost = sum(cost_estimates.values())
+                if total_cost > 10.0:
+                    print(f"⚠️  Total estimated cost: ${total_cost:.2f} (consider setting cost limits)")
+            else:
+                print("   No cost estimates available (providers not configured)")
+
+            # ENHANCEMENT: Add model recommendations
+            print("\n--- Model Recommendations ---")
+            recommendations = self.get_ai_model_recommendations("general")
+            print("💡 Recommended models for general use:")
+            for provider, model in recommendations.items():
+                if provider in ai_status['active_providers']:
+                    current_model = ai_status['providers'][provider]['model']
+                    if current_model == model:
+                        print(f"   {provider.upper()}: {model} ✅ (currently selected)")
+                    else:
+                        print(f"   {provider.upper()}: {model} (you selected: {current_model})")
 
         return config
 
@@ -2637,12 +3069,22 @@ class ConfigurationManager:
 
             tables.append(table)
 
-        return GenerationConfig(
+        config = GenerationConfig(
             environment=Environment.DEVELOPMENT.value,
             tables=tables,
             rows=1000,
             ai=AIConfig()  # Default AI config with both providers disabled
         )
+
+        custom_output_dir = os.getenv('DG_TEMPLATE_OUTPUT_DIR')
+        if custom_output_dir:
+            success = self.update_output_directory(config, custom_output_dir, cleanup_old=False)
+            if not success:
+                self.logger.warning(f"⚠️  Failed to set custom template output directory, using default")
+            else:
+                self.logger.info(f"📁 Template output directory set to: {config.output.directory}")
+
+        return config
 
     def _generate_advanced_template(self, table_schemas: List[Dict[str, Any]]) -> GenerationConfig:
         """Generate advanced configuration template with more features"""
@@ -2669,17 +3111,19 @@ class ConfigurationManager:
             enable_anomaly_detection=True
         )
 
+        model_recommendations = self.get_ai_model_recommendations("general")
+
         # AI enabled with moderate settings
         config.ai = AIConfig(
             openai=OpenAIConfig(
                 enabled=False,
-                model="gpt-3.5-turbo",
+                model=model_recommendations.get("openai", "gpt-3.5-turbo"),
                 cache_size=100,
                 cost_limit_usd=15.0
             ),
             mistral=MistralConfig(
                 enabled=False,
-                model="mistral-small",
+                model=model_recommendations.get("mistral", "mistral-small"),
                 cache_size=100,
                 cost_limit_usd=12.0
             ),
@@ -2897,8 +3341,17 @@ class ConfigurationManager:
         # Deep merge dictionaries
         merged_dict = self._deep_merge_dicts(base_dict, override_dict)
 
-        # Convert back to configuration object
-        return self._parse_config_dict(merged_dict)
+        merged_config = self._parse_config_dict(merged_dict)
+
+        if (override_config.output.directory != "./output" and
+                override_config.output.directory != base_config.output.directory):
+            # Use change_directory to properly update both directory and report_directory
+            merged_config.output.change_directory(override_config.output.directory)
+
+            self.logger.info(f"📁 Merged config: Updated output directory to {merged_config.output.directory}")
+            self.logger.info(f"📁 Merged config: Updated report directory to {merged_config.output.report_directory}")
+
+        return merged_config
 
     def _deep_merge_dicts(self, base: Dict[str, Any],
                           override: Dict[str, Any]) -> Dict[str, Any]:
@@ -3039,6 +3492,29 @@ class ConfigurationManager:
 
         else:
             self.logger.error(f"Unknown AI provider: {provider}")
+            return False
+
+    def update_output_directory(self, config: GenerationConfig, new_directory: str,
+                                cleanup_old: bool = False) -> bool:
+        """Safely update output directory in configuration"""
+        try:
+            old_directory = config.output.directory
+            old_report_directory = config.output.report_directory
+
+            config.output.change_directory(new_directory, cleanup_old=cleanup_old)
+
+            self.logger.info(f"📁 Successfully changed output directory:")
+            self.logger.info(f"   From: {old_directory}")
+            self.logger.info(f"   To:   {config.output.directory}")
+            self.logger.info(f"   Report dir: {config.output.report_directory}")
+
+            if cleanup_old:
+                self.logger.info(f"🗑️  Cleaned up old directory: {old_directory}")
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to change output directory: {e}")
             return False
 
     def get_ai_cost_summary(self, config: GenerationConfig) -> Dict[str, Any]:
