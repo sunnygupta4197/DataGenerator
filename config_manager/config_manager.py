@@ -11,6 +11,7 @@ import shutil
 from contextlib import contextmanager
 from .json_reader import JSONConfigReader
 from .schema_validator import SchemaValidator
+from .ai_providers import AIProvider, AIConfig, OpenAIConfig, MistralConfig
 
 
 class Environment(Enum):
@@ -19,22 +20,6 @@ class Environment(Enum):
     TESTING = "testing"
     STAGING = "staging"
     PRODUCTION = "production"
-
-
-class AIProvider(Enum):
-    """Supported AI providers"""
-    OPENAI = "openai"
-    MISTRAL = "mistral"
-
-    @classmethod
-    def all(cls):
-        """Get all providers as list"""
-        return list(cls)
-
-    @classmethod
-    def values(cls):
-        """Get all provider values as list"""
-        return [provider.value for provider in cls]
 
 
 @dataclass
@@ -379,146 +364,6 @@ class SecurityConfig:
                 config_dict[new_key] = config_dict.pop(old_key)
 
         return cls(**config_dict)
-
-
-@dataclass
-class OpenAIConfig:
-    """OpenAI integration configuration"""
-    enabled: bool = False
-    api_key: Optional[str] = None
-    api_key_env_var: str = "OPENAI_API_KEY"
-    api_key_file: Optional[str] = None
-    model: str = "gpt-3.5-turbo"
-    max_tokens: int = 2000
-    temperature: float = 0.7
-    cache_size: int = 100
-    timeout_seconds: int = 30
-    retry_attempts: int = 3
-    fallback_enabled: bool = True
-    cost_limit_usd: Optional[float] = None
-
-    def __post_init__(self):
-        """Load API key from environment if not provided"""
-        if self.enabled and not self.api_key:
-            self.api_key = os.getenv(self.api_key_env_var)
-            if not self.api_key:
-                print(f"Warning: OpenAI enabled but no API key found in {self.api_key_env_var}")
-                self.enabled = False
-
-    def get_api_key(self) -> Optional[str]:
-        """Get API key from various sources in priority order"""
-        # 1. Direct API key (highest priority)
-        if self.api_key:
-            return self.api_key
-
-        # 2. API key from file
-        if self.api_key_file and os.path.exists(self.api_key_file):
-            try:
-                with open(self.api_key_file, 'r') as f:
-                    key = f.read().strip()
-                    if key:
-                        return key
-            except Exception:
-                pass
-
-        # 3. Environment variable (lowest priority)
-        return os.getenv(self.api_key_env_var)
-
-    def is_available(self) -> bool:
-        """Check if OpenAI is properly configured and available"""
-        return self.enabled and self.get_api_key() is not None
-
-
-@dataclass
-class MistralConfig:
-    """Mistral AI integration configuration"""
-    enabled: bool = False
-    api_key: Optional[str] = None
-    api_key_env_var: str = "MISTRAL_API_KEY"
-    api_key_file: Optional[str] = None
-    model: str = "mistral-small"  # mistral-tiny, mistral-small, mistral-medium, mistral-large
-    max_tokens: int = 2000
-    temperature: float = 0.7
-    cache_size: int = 100
-    timeout_seconds: int = 30
-    retry_attempts: int = 3
-    fallback_enabled: bool = True
-    cost_limit_usd: Optional[float] = None
-
-    def __post_init__(self):
-        """Load API key from environment if not provided"""
-        if self.enabled and not self.api_key:
-            self.api_key = os.getenv(self.api_key_env_var)
-            if not self.api_key:
-                print(f"Warning: Mistral AI enabled but no API key found in {self.api_key_env_var}")
-                self.enabled = False
-
-    def get_api_key(self) -> Optional[str]:
-        """Get API key from various sources in priority order"""
-        # 1. Direct API key (highest priority)
-        if self.api_key:
-            return self.api_key
-
-        # 2. API key from file
-        if self.api_key_file and os.path.exists(self.api_key_file):
-            try:
-                with open(self.api_key_file, 'r') as f:
-                    key = f.read().strip()
-                    if key:
-                        return key
-            except Exception:
-                pass
-
-        # 3. Environment variable (lowest priority)
-        return os.getenv(self.api_key_env_var)
-
-    def is_available(self) -> bool:
-        """Check if Mistral AI is properly configured and available"""
-        return self.enabled and self.get_api_key() is not None
-
-
-@dataclass
-class AIConfig:
-    """Master AI configuration supporting multiple providers"""
-    openai: Optional[OpenAIConfig] = None
-    mistral: Optional[MistralConfig] = None
-    primary_provider: AIProvider = AIProvider.OPENAI
-    enable_fallback: bool = True
-    shared_cache_size: int = 200  # Shared cache for all AI providers
-
-    def __post_init__(self):
-        """Initialize default configurations if not provided"""
-        if self.openai is None:
-            self.openai = OpenAIConfig()
-        if self.mistral is None:
-            self.mistral = MistralConfig()
-
-    def get_active_providers(self) -> list[AIProvider]:
-        """Get list of enabled AI providers"""
-        providers = []
-        if self.openai and self.openai.enabled:
-            providers.append(AIProvider.OPENAI)
-        if self.mistral and self.mistral.enabled:
-            providers.append(AIProvider.MISTRAL)
-        return providers
-
-    def get_primary_provider_config(self):
-        """Get configuration for primary provider"""
-        if self.primary_provider == AIProvider.OPENAI:
-            return self.openai
-        elif self.primary_provider == AIProvider.MISTRAL:
-            return self.mistral
-        return None
-
-    def switch_primary_provider(self, provider: str) -> bool:
-        """Switch primary provider"""
-        if provider == AIProvider.OPENAI and self.openai and self.openai.enabled:
-            self.primary_provider = AIProvider.OPENAI
-            return True
-        elif provider == AIProvider.MISTRAL and self.mistral and self.mistral.enabled:
-            self.primary_provider = AIProvider.MISTRAL
-            return True
-        return False
 
 
 @dataclass
@@ -3500,7 +3345,7 @@ class ConfigurationManager:
 
         return summary
 
-    def switch_ai_provider(self, config: GenerationConfig, provider: str) -> bool:
+    def switch_ai_provider(self, config: GenerationConfig, provider: AIProvider) -> bool:
         """Switch primary AI provider in configuration"""
         if not config.ai:
             self.logger.error("AI configuration not found")
