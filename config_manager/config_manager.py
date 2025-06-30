@@ -1284,6 +1284,29 @@ class ConfigurationManager:
 
         return config
 
+    def update_output_directory(self, config: GenerationConfig, new_directory: str,
+                                cleanup_old: bool = False) -> bool:
+        """Safely update output directory in configuration"""
+        try:
+            old_directory = config.output.directory
+            old_report_directory = config.output.report_directory
+
+            config.output.change_directory(new_directory, cleanup_old=cleanup_old)
+
+            self.logger.info(f"📁 Successfully changed output directory:")
+            self.logger.info(f"   From: {old_directory}")
+            self.logger.info(f"   To:   {config.output.directory}")
+            self.logger.info(f"   Report dir: {config.output.report_directory}")
+
+            if cleanup_old:
+                self.logger.info(f"🗑️  Cleaned up old directory: {old_directory}")
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to change output directory: {e}")
+            return False
+
     def _validate_ai_configuration_comprehensive(self, config: GenerationConfig):
         """Comprehensive AI configuration validation with user feedback"""
         self.logger.info("🤖 Validating AI configuration...")
@@ -3492,29 +3515,6 @@ class ConfigurationManager:
 
         else:
             self.logger.error(f"Unknown AI provider: {provider}")
-            return False
-
-    def update_output_directory(self, config: GenerationConfig, new_directory: str,
-                                cleanup_old: bool = False) -> bool:
-        """Safely update output directory in configuration"""
-        try:
-            old_directory = config.output.directory
-            old_report_directory = config.output.report_directory
-
-            config.output.change_directory(new_directory, cleanup_old=cleanup_old)
-
-            self.logger.info(f"📁 Successfully changed output directory:")
-            self.logger.info(f"   From: {old_directory}")
-            self.logger.info(f"   To:   {config.output.directory}")
-            self.logger.info(f"   Report dir: {config.output.report_directory}")
-
-            if cleanup_old:
-                self.logger.info(f"🗑️  Cleaned up old directory: {old_directory}")
-
-            return True
-
-        except Exception as e:
-            self.logger.error(f"❌ Failed to change output directory: {e}")
             return False
 
     def get_ai_cost_summary(self, config: GenerationConfig) -> Dict[str, Any]:
