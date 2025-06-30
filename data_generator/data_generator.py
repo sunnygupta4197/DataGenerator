@@ -9,14 +9,6 @@ from .value_generator import ValueGenerator
 from constraint_manager.constraint_manager import ConstraintManager
 from quality.validation_system import Validator
 
-try:
-    import openai
-
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
-    print("Warning: OpenAI package not available. AI fallback will be disabled.")
-
 
 class DataTypeConverter:
     """Handles data type conversions - separated for clarity"""
