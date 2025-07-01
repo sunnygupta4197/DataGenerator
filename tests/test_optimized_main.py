@@ -26,6 +26,7 @@ class TestOptimizedMain(unittest.TestCase):
     def test_all_examples(self):
         for example in self.example_files:
             with self.subTest(example=example):
+                path = os.path.join("./examples", example)
                 path = os.path.join("../examples", example)
                 data = self._load_and_run(path)
                 self.assertIsInstance(data, dict)
