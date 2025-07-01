@@ -440,10 +440,12 @@ class OutputConfig:
         self.directory = self.directory.format(timestamp=self.timestamp)
         self.report_directory = f'{self.directory}/reports'
 
-        if self.create_directory and not os.path.exists(self.directory):
+        if self.create_directory:
             try:
-                os.makedirs(self.directory, exist_ok=True)
-                os.makedirs(self.report_directory, exist_ok=True)
+                if not os.path.exists(self.directory):
+                    os.makedirs(self.directory, exist_ok=True)
+                if not os.path.exists(self.report_directory):
+                    os.makedirs(self.report_directory, exist_ok=True)
             except Exception as e:
                 print(f"Warning: Could not create output directory {self.directory}: {e}")
 

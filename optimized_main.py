@@ -893,7 +893,7 @@ class OptimizedDataGenerationOrchestrator:
         }
 
         # Save comprehensive report
-        report_path = os.path.join(config.output.report_directory, "comprehensive_generation_report.json")
+        report_path = os.path.join(self.config.output.report_directory, "comprehensive_generation_report.json")
         try:
             with open(report_path, 'w') as f:
                 json.dump(report, f, indent=2, default=str)
@@ -913,7 +913,7 @@ class OptimizedDataGenerationOrchestrator:
         """Save detailed performance profiling report"""
         try:
             profile_report = self.generation_engine.processor_pipeline.get_detailed_processor_stats()
-            profile_path = os.path.join(config.output.report_directory, "post_processor_pipeline_report.json")
+            profile_path = os.path.join(self.config.output.report_directory, "post_processor_pipeline_report.json")
 
             with open(profile_path, 'w') as f:
                 json.dump(profile_report, f, indent=2, default=str)
@@ -926,7 +926,7 @@ class OptimizedDataGenerationOrchestrator:
         """Save detailed performance profiling report"""
         try:
             profile_report = self.generation_engine.performance_profiler.get_profile_report()
-            profile_path = os.path.join(config.output.report_directory, "performance_profiling_report.json")
+            profile_path = os.path.join(self.config.output.report_directory, "performance_profiling_report.json")
 
             with open(profile_path, 'w') as f:
                 json.dump(profile_report, f, indent=2, default=str)
@@ -938,7 +938,7 @@ class OptimizedDataGenerationOrchestrator:
     def _save_security_audit_trail(self):
         """Save security audit trail"""
         try:
-            audit_path = os.path.join(config.output.report_directory, "security_audit_trail.json")
+            audit_path = os.path.join(self.config.output.report_directory, "security_audit_trail.json")
             self.generation_engine.security_manager.export_audit_trail(audit_path)
             self.logger.info(f"🔒 Security audit trail saved to: {audit_path}")
         except Exception as e:
@@ -1151,7 +1151,7 @@ Features:
     # Basic arguments
     parser.add_argument('--config', '-c', required=True,
                         help='Path to configuration file (JSON)')
-    parser.add_argument('--output_dir', '-o', default='./output',
+    parser.add_argument('--output_dir', '-o',
                         help='Output directory for generated files')
     parser.add_argument('--rows', '-r', type=int,
                         help='Number of rows to generate per table')
