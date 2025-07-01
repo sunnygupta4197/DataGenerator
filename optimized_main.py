@@ -1222,128 +1222,6 @@ Features:
     return parser.parse_args()
 
 
-def apply_command_line_overrides(config: GenerationConfig, args):
-    """Apply command line argument overrides to configuration"""
-
-    # Basic overrides
-    if args.rows:
-        config.rows = args.rows
-    if args.max_workers:
-        config.performance.max_workers = args.max_workers
-    if args.max_memory:
-        config.performance.max_memory_mb = args.max_memory
-    if args.batch_size:
-        config.performance.batch_size = args.batch_size
-    if args.format:
-        config.output.format = args.format
-    if args.output_dir:
-        config.output.change_directory(args.output_dir)
-    if args.log_level:
-        config.logging.level = args.log_level
-
-    # Compression setting
-    if args.compression:
-        if not hasattr(config.output, 'compression'):
-            config.output.compression = args.compression
-        else:
-            config.output.compression = args.compression
-
-    # Feature flags
-    if args.enable_streaming:
-        config.performance.enable_streaming = True
-    if args.enable_parallel:
-        config.performance.enable_parallel = True
-    if args.enable_quality_analysis:
-        config.validation.enable_data_quality_analysis = True
-    if args.enable_masking:
-        config.security.enable_data_masking = True
-    if args.enable_encryption:
-        config.security.enable_encryption = True
-
-    # Advanced features
-    if args.enable_business_rules:
-        if not hasattr(config.validation, 'enable_business_rules'):
-            config.validation.enable_business_rules = True
-        else:
-            config.validation.enable_business_rules = True
-
-    if args.enable_anomaly_detection:
-        if not hasattr(config.validation, 'enable_anomaly_detection'):
-            config.validation.enable_anomaly_detection = True
-        else:
-            config.validation.enable_anomaly_detection = True
-
-    # Security options
-    if args.encryption_key:
-        if not hasattr(config.security, 'encryption_key'):
-            config.security.encryption_key = args.encryption_key
-        else:
-            config.security.encryption_key = args.encryption_key
-
-    # Validation options
-    if args.strict_validation:
-        config.validation.strict_mode = True
-        if not hasattr(config.validation, 'strict_referential_integrity'):
-            config.validation.strict_referential_integrity = True
-        else:
-            config.validation.strict_referential_integrity = True
-
-    # Performance profiling
-    if args.profile_performance:
-        if not hasattr(config.performance, 'enable_profiling'):
-            config.performance.enable_profiling = True
-        else:
-            config.performance.enable_profiling = True
-
-    # AI configuration
-    if args.ai_enabled or args.openai_enabled or args.mistral_enabled:
-        if args.openai_enabled or args.ai_enabled:
-            config.ai.openai.enabled = True
-        if args.mistral_enabled or args.ai_enabled:
-            config.ai.mistral.enabled = True
-
-    if args.ai_primary_provider:
-        if hasattr(config.ai, 'primary_provider'):
-            config.ai.primary_provider = args.ai_primary_provider
-        else:
-            config.ai.primary_provider = args.ai_primary_provider
-
-    if args.openai_model:
-        config.ai.openai.model = args.openai_model
-
-    if args.mistral_model:
-        config.ai.mistral.model = args.mistral_model
-
-    # Enable all features
-    if args.enable_all_features:
-        config.performance.enable_streaming = True
-        config.performance.enable_parallel = True
-        config.validation.enable_data_quality_analysis = True
-        config.security.enable_data_masking = True
-
-        if not hasattr(config.validation, 'enable_business_rules'):
-            config.validation.enable_business_rules = True
-        else:
-            config.validation.enable_business_rules = True
-
-        if not hasattr(config.validation, 'enable_anomaly_detection'):
-            config.validation.enable_anomaly_detection = True
-        else:
-            config.validation.enable_anomaly_detection = True
-
-        # Enable AI features
-        config.ai.openai.enabled = True
-        config.ai.mistral.enabled = True
-
-        # Enable advanced validation
-        config.validation.strict_mode = True
-
-        if not hasattr(config.performance, 'enable_profiling'):
-            config.performance.enable_profiling = True
-        else:
-            config.performance.enable_profiling = True
-
-
 if __name__ == "__main__":
     print("🚀 OPTIMIZED DATA GENERATOR WITH COMPLETE FEATURE SET")
     print("=" * 80)
@@ -1365,30 +1243,10 @@ if __name__ == "__main__":
 
         config = config_manager.load_configuration(
             config_path=args.config,
-            environment=getattr(args, 'environment', None),
-            # Pass all arguments as keyword arguments
-            rows=args.rows,
-            max_workers=args.max_workers,
-            max_memory=args.max_memory,
-            batch_size=args.batch_size,
-            output_format=args.format,
-            output_dir=args.output_dir,
-            log_level=args.log_level,
-            enable_streaming=args.enable_streaming,
-            enable_parallel=args.enable_parallel,
-            enable_masking=args.enable_masking,
-            enable_quality_analysis=args.enable_quality_analysis,
-            enable_encryption=args.enable_encryption,
-            enable_all_features=args.enable_all_features,
-            ai_enabled=args.ai_enabled,
-            openai_enabled=args.openai_enabled,
-            mistral_enabled=args.mistral_enabled,
-            ai_primary_provider=args.ai_primary_provider,
-            openai_model=args.openai_model,
-            mistral_model=args.mistral_model
+            **args.__dict__
         )
         # Apply command line overrides
-        apply_command_line_overrides(config, args)
+        # apply_command_line_overrides(config, args)
 
         logger = setup_logging_with_fallback(config=config)
         config_manager.logger = logger
@@ -1418,9 +1276,9 @@ if __name__ == "__main__":
             features.append("Business Rules")
         if getattr(config.validation, 'enable_anomaly_detection', False):
             features.append("Anomaly Detection")
-        if config.ai.openai.enabled:
+        if config.ai.openai and config.ai.is_openai_enabled():
             features.append('AI: OpenAI')
-        if config.ai.mistral.enabled:
+        if config.ai.mistral and config.ai.is_mistral_enabled():
             features.append('AI: Mistral')
 
         logger.info(f"   Features enabled: {', '.join(features) if features else 'Basic (Optimized)'}")

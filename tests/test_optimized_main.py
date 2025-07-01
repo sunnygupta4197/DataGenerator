@@ -29,6 +29,7 @@ class TestOptimizedMain(unittest.TestCase):
         for example in self.example_files:
             print("Running example {}".format(example))
             with self.subTest(example=example):
+                path = os.path.join("./examples", example)
                 path = os.path.join("../examples", example)
                 config, data = self._load_and_run(path)
                 self.assertIsInstance(data, dict)
