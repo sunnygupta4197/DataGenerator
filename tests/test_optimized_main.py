@@ -19,7 +19,6 @@ class TestOptimizedMain(unittest.TestCase):
 
     def _load_and_run(self, config_path):
         config = ConfigurationManager().load_configuration(config_path, enable_all_features=True, rows=10)
-        print(config_path, config.output)
         orchestrator = OptimizedDataGenerationOrchestrator(config, self.logger)
         data = orchestrator.run_data_generation(config.rows)
         return data
