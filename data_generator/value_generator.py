@@ -273,13 +273,13 @@ class ValueGenerator:
     def _generate_time_range(self, rule: dict) -> str:
         """Generate time within range with optional formatting"""
         start_time = rule.get("start", "00:00:00")
-        end_time = rule.get("end", "23:59:59")
+        end_time = rule.get("end", "23:59:59.000")
         time_format = rule.get("format", "%H:%M:%S")  # Default format
 
         start_dt = datetime.strptime(f"1970-01-01 {start_time}", "%Y-%m-%d %H:%M:%S")
         end_dt = datetime.strptime(f"1970-01-01 {end_time}", "%Y-%m-%d %H:%M:%S")
 
-        generated_time = self.faker.date_time_between_dates(start_dt, end_dt)
+        generated_time = self.faker.date_time_between_dates(start_dt, end_dt).replace(microsecond=random.randint(0, 999999))
 
         # Apply custom formatting
         return generated_time.strftime(time_format)
@@ -293,7 +293,7 @@ class ValueGenerator:
         start_dt = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S")
         end_dt = datetime.strptime(end_ts, "%Y-%m-%d %H:%M:%S")
 
-        generated_timestamp = self.faker.date_time_between_dates(start_dt, end_dt)
+        generated_timestamp = self.faker.date_time_between_dates(start_dt, end_dt).replace(microsecond=random.randint(0, 999999))
 
         # Apply custom formatting
         if timestamp_format:
@@ -314,6 +314,7 @@ class ValueGenerator:
             'YY': '%y',  # 2-digit year
 
             # Time patterns
+            'SSS': '%f', # MiliSeconds with leading zero (000-999)
             'HH': '%H',  # Hour with leading zero (00-23)
             'hh': '%I',  # Hour with leading zero (01-12)
             'mm': '%M',  # Minute with leading zero (00-59)
@@ -362,7 +363,7 @@ class ValueGenerator:
             'yy': 'YY', 'YY': 'YY',
             'hh': 'HH', 'HH': 'HH',
             'min': 'mm', 'minute': 'mm', 'minutes': 'mm',
-            'sec': 'ss', 'second': 'ss', 'seconds': 'ss',
+            'sec': 'ss', 'second': 'ss', 'seconds': 'ss', 'sss': 'miliseconds',
             'am': 'A', 'pm': 'A', 'AM': 'A', 'PM': 'A',
             'month': 'MMMM', 'mon': 'MMM',
             'day': 'DD', 'year': 'YYYY'

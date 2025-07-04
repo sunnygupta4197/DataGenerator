@@ -401,6 +401,9 @@ class BatchGenerator:
             if self.constraint_manager.should_generate_null(column):
                 row[column_name] = None
 
+            if column.get("default") and row[column_name] is None:
+                row[column_name] = column.get("default")
+
             # Apply length constraints
             length_constraint = column.get("length")
             if length_constraint and row[column_name] is not None:

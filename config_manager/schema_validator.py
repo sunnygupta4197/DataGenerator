@@ -37,6 +37,10 @@ class SchemaValidator:
             'h': r'(?:[1-9]|1[012])',
             'mm': r'(?:[0-5][0-9])',
             'm': r'(?:[0-9]|[1-5][0-9])',
+            'ssssss': r'(?:[0-5][0-9])',
+            'sssss': r'(?:[0-5][0-9])',
+            'ssss': r'(?:[0-5][0-9])',
+            'sss': r'(?:[0-5][0-9])',
             'ss': r'(?:[0-5][0-9])',
             's': r'(?:[0-9]|[1-5][0-9])',
             'A': r'(?:AM|PM)',
@@ -759,6 +763,9 @@ class SchemaValidator:
             ('HH', '%H'),  # Hour 24-format with leading zero
             ('hh', '%I'),  # Hour 12-format with leading zero
             ('mm', '%M'),  # Minute with leading zero
+            ('ssssss', '%f'),  # MiliSecond with leading zero
+            ('sssss', '%f'),  # MiliSecond with leading zero
+            ('ssss', '%f'),  # MiliSecond with leading zero
             ('ss', '%S'),  # Second with leading zero
 
             # AM/PM patterns
@@ -795,6 +802,10 @@ class SchemaValidator:
             'sec': 'ss',  # seconds
             'second': 'ss',
             'seconds': 'ss',
+            'miliseconds': 'sss',
+            'milisecond': 'sss',
+            'microseconds': 'ssssss',
+            'microsecond': 'ssssss',
             'am': 'A',
             'pm': 'A',
             'AM': 'A',
@@ -906,7 +917,7 @@ class SchemaValidator:
         has_date_component = any(pattern in format_pattern for pattern in
                                  ['DD', 'D', 'MM', 'M', 'YYYY', 'YY', 'dd', 'mm', 'yyyy', 'yy'])
         has_time_component = any(pattern in format_pattern for pattern in
-                                 ['HH', 'H', 'hh', 'h', 'mm', 'm', 'ss', 's'])
+                                 ['HH', 'H', 'hh', 'h', 'mm', 'm', 'ssssss', 'sssss', 'ssss','sss', 'ss', 's'])
 
         if not has_date_component:
             self.warnings.append(f"Table '{table_name}', Column '{col_name}': "

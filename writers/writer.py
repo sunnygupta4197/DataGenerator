@@ -1027,7 +1027,7 @@ class WriterFactory:
 
         try:
             # Get file path
-            file_path = config.get_output_path(table_name)
+            file_path = config.get_output_path(table_name=kwargs.get('file_name', table_name))
 
             # Determine format
             format_name = getattr(config, 'format', 'csv').lower()
@@ -1077,7 +1077,7 @@ class WriterFactory:
         elif format_name == 'tsv':
             # Handle TSV as CSV with tab delimiter
             original_delimiter = getattr(config, 'csv_delimiter', ',')
-            config.csv_delimiter = '\t'
+            config.delimiter = '\t'
             strategy = CSVStrategy()
             # Note: delimiter will be used during writing
             return strategy

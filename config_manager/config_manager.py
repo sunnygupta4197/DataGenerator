@@ -391,7 +391,7 @@ class OutputConfig:
     create_directory: bool = True
 
     # Format-specific settings
-    csv_delimiter: str = ","
+    delimiter: str = ","
     csv_quotechar: str = '"'
     csv_line_terminator: str = '\n'
     json_indent: Optional[int] = 2
@@ -431,7 +431,7 @@ class OutputConfig:
 
     def _setup_output_directory(self):
         """Setup output directory"""
-        valid_formats = ["csv", "json", "jsonl", "parquet", "sql_query", "xlsx", "dsv", "fixed", "fwf"]
+        valid_formats = ["csv", "tsv", "json", "jsonl", "parquet", "sql_query", "xlsx", "dsv", "fixed", "fwf"]
         if self.format not in valid_formats:
             print(f"Warning: Invalid format '{self.format}', defaulting to 'csv'")
             self.format = "csv"
@@ -903,10 +903,11 @@ class ConfigurationManager:
         config = raw_config.copy()
         applied_overrides = []
 
-        temp_config = self._parse_config_dict(config)
-
         # Apply basic overrides (rows, output_format, etc.)
         basic_overrides = self._apply_basic_overrides(config, overrides)
+        
+        temp_config = self._parse_config_dict(config)
+
         applied_overrides.extend(basic_overrides)
 
         enable_all = overrides.get('enable_all_features', False)
@@ -1033,12 +1034,9 @@ class ConfigurationManager:
             if 'output' not in config:
                 config['output'] = {}
             old_value = config['output'].get('directory', 'not set')
-            temp_output = OutputConfig(**config.get('output', {}))
-            temp_output.change_directory(overrides['output_dir'])
-
-            config['output']['directory'] = temp_output.directory
-            config['output']['report_directory'] = temp_output.report_directory
-            applied_overrides.append(f"output.directory: {old_value} → {temp_output.directory}")
+            config['output']['directory'] = overrides['output_dir']
+            config['output']['report_directory'] = os.path.join(overrides['output_dir'], 'reports')
+            applied_overrides.append(f"output.directory: {old_value} → {overrides['output_dir']}")
 
         return applied_overrides
 

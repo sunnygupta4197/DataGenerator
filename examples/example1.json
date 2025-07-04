@@ -2,6 +2,7 @@
     "tables": [
 		{
 			"table_name": "address",
+            "file_name": "abc",
             "columns": [
                 {
                     "name": "address_id",
@@ -17,6 +18,14 @@
                         "type": "address",
                         "multi_line": false
                     }
+                },
+                {
+                    "name": "comment",
+                    "type": "str",
+                    "nullable": true,
+                    "rule": "word",
+                    "default": "this is default",
+                    "null_percentage": 50
                 }
 			]
 		},
@@ -75,11 +84,12 @@
                 },
                 {
                     "name": "registration_date",
-                    "type": "date",
+                    "type": "timestamp",
                     "nullable": true,
                     "rule": {
-                        "type": "date_range",
-                        "start": "1950-01-01"
+                        "type": "timestamp_range",
+                        "start": "1950-01-01 00:00:00",
+                        "format": "YYYY-MM-DDTHH:mm:ss"
                     },
                     "default": "2020-01-01"
                 },
@@ -198,7 +208,7 @@
         "enable_fixed_width": true,
         "directory": "./output/{timestamp}",
         "filename_template": "{table_name}",
-        "csv_delimiter": "|",
+        "delimiter": "|",
         "alignment": "left",
         "numeric_alignment": "left",
         "default_column_width": 30

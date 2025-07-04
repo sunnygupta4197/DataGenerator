@@ -3,522 +3,232 @@ import logging
 import argparse
 from datetime import datetime
 import json
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 from traceback import print_exc
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from dataclasses import dataclass
+import gc
+import time
 
 import pandas as pd
 
 from constraint_manager.constraint_manager import ConstraintManager
-from validators.validation_system import Validator
-from data_generator.streaming_data_generator import ParallelDataGenerator, DataQualityAnalyzer, SecurityManager, \
-    PerformanceProfiler
+from data_generator.streaming_data_generator import ParallelDataGenerator, PerformanceProfiler
 from config_manager.config_manager import ConfigurationManager, GenerationConfig
 from data_generator.data_generator import DataGenerator
-
 from writers.writer import WriterFactory, Writer
+
+from processors.processor_pipeline import ProcessorPipeline
+from generators.generator_factory import GeneratorFactory
+from quality import BusinessRulesEngine, DataQualityAnalyzer, AnomalyDetector, Validator, SecurityManager
+
+
+@dataclass
+class CachedComponents:
+    """Cache for expensive-to-create components"""
+    data_generator: Optional[DataGenerator] = None
+    security_manager: Optional[SecurityManager] = None
+    quality_analyzer: Optional[DataQualityAnalyzer] = None
+    last_used: Optional[datetime] = None
+    access_count: int = 0
+
+
+class ComponentCache:
+    """Thread-safe component cache with memory management"""
+
+    def __init__(self, max_size: int = 20):
+        self.max_size = max_size
+        self._cache = {}
+        self._lock = threading.Lock()
+
+    def get_or_create(self, key: str, factory_func, *args, **kwargs):
+        with self._lock:
+            if key in self._cache:
+                self._cache[key].last_used = datetime.now()
+                self._cache[key].access_count += 1
+                return self._cache[key]
+
+            if len(self._cache) >= self.max_size:
+                self._evict_oldest()
+
+            component = factory_func(*args, **kwargs)
+            self._cache[key] = CachedComponents(
+                data_generator=component,
+                last_used=datetime.now(),
+                access_count=1
+            )
+            return self._cache[key]
+
+    def _evict_oldest(self):
+        if not self._cache:
+            return
+        oldest_key = min(self._cache.keys(),
+                         key=lambda k: self._cache[k].last_used)
+        del self._cache[oldest_key]
+        gc.collect()
 
 
 class OptimizedDataGenerationEngine:
     """
-    Enhanced data generation engine using the new parallel generator
-    with streaming support, memory management, and quality analysis
+    Optimized data generation engine with complete feature set
     """
+
+    # Class-level cache for shared components
+    _component_cache = ComponentCache()
+    _instance_count = 0
 
     def __init__(self, config: GenerationConfig, logger: logging.Logger):
         self.config = config
         self.logger = logger
 
-        # Initialize core components with optimized versions
-        self.constraint_manager = ConstraintManager(
-            logger=logger,
-            max_memory_mb=config.performance.max_memory_mb,
-            enable_parallel=config.performance.enable_parallel
-        )
+        # Instance tracking
+        OptimizedDataGenerationEngine._instance_count += 1
+        self.instance_id = OptimizedDataGenerationEngine._instance_count
 
-        self.validator = Validator(logger=logger)
-
-        # Create the main DataGenerator instance with full sophisticated components
-        self.data_generator = DataGenerator(config, config.locale, ai_config=config.ai, logger=logger)
-
-        # Initialize the enhanced parallel data generator with the full DataGenerator
-        self.parallel_generator = ParallelDataGenerator(
-            data_generator_instance=self.data_generator,
-            max_workers=config.performance.max_workers,
-            max_memory_mb=config.performance.max_memory_mb,
-            enable_streaming=config.performance.enable_streaming,
-            logger=logger
-        )
-
-        self.streaming_used = False
-        # Initialize additional enhanced components
-        self.data_quality_analyzer = DataQualityAnalyzer(logger=logger)
-        self.security_manager = SecurityManager(logger=logger)
+        # Initialize caches
+        self._fk_constraints_cache = {}
+        self._sensitivity_cache = {}
+        self._memory_estimate_cache = {}
+        self._business_rules_cache = {}
         self.performance_profiler = PerformanceProfiler(logger=logger)
 
-        # Configure security if enabled
+        # Initialize core components with caching
+        self.constraint_manager = self._get_cached_constraint_manager()
+        self.validator = self._get_cached_validator()
+        self.data_generator = self._create_optimized_data_generator()
+        self.parallel_generator = self._create_optimized_parallel_generator()
+
+        self.streaming_used = False
+
+        # Initialize analyzers
+        self.data_quality_analyzer = self._get_cached_quality_analyzer()
+        self.security_manager = self._get_cached_security_manager()
+
+        # Initialize engines
+        self.business_rules_engine = BusinessRulesEngine(logger=logger)
+        self.anomaly_detector = AnomalyDetector(logger=logger)
+
+        self.generator_factory = GeneratorFactory(
+            config, logger, self.parallel_generator
+        )
+
+        self.processor_pipeline = ProcessorPipeline(
+            config, logger, self.data_quality_analyzer,
+            self.security_manager, self.business_rules_engine, self.anomaly_detector, self.validator
+        )
+
+        # Configure security
         if config.security.enable_data_masking:
-            self.security_manager.enable_masking = True
+            self._configure_security()
 
-            # Add default masking rules
-            self.security_manager.add_masking_rule('email', 'partial')
-            self.security_manager.add_masking_rule('phone', 'partial')
-            self.security_manager.add_masking_rule('ssn', 'partial')
-            self.security_manager.add_masking_rule('credit', 'partial')
-            self.security_manager.add_masking_rule('income', 'hash')
-            self.security_manager.add_masking_rule('salary', 'hash')
+        # Initialize statistics
+        self.generation_stats = self._create_stats_structure()
 
-        # Set encryption key if provided
-        if hasattr(config.security, 'encryption_key') and config.security.encryption_key:
-            self.security_manager.set_encryption_key(config.security.encryption_key.encode())
+        # Setup optimizations
+        self._setup_performance_optimizations()
 
-        # Generation statistics
-        self.generation_stats = {
+    def _create_stats_structure(self):
+        """Create statistics structure"""
+        return {
             'tables_processed': 0,
             'total_records_generated': 0,
             'total_duration': 0.0,
             'memory_peak_mb': 0.0,
             'quality_scores': {},
             'security_operations': 0,
-            'performance_profiles': {},
+            'business_rules_violations': 0,
+            'anomalies_detected': 0,
             'errors': []
         }
 
-    def generate_data_for_table(self, table_metadata: Dict[str, Any],
-                                total_records: int,
-                                foreign_key_data: Dict[str, List] = None,
-                                output_dir: str = "./output") -> Tuple[List[Dict], Dict]:
-        """
-        Generate data for a single table using the enhanced parallel generator
-        """
-        table_name = table_metadata["table_name"]
-        self.logger.info(f"🚀 Starting enhanced generation for table '{table_name}' ({total_records:,} records)")
-
-        self.streaming_used = False
-        start_time = datetime.now()
-
-        try:
-            with self.performance_profiler.profile(f'table_{table_name}_generation'):
-                # Determine generation strategy based on dataset size and configuration
-                generated_data = self._select_and_execute_generation_strategy(
-                    table_metadata, total_records, foreign_key_data, output_dir
-                )
-
-            # Calculate generation statistics
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-
-            # Enhanced data quality analysis
-            quality_analysis = None
-            if self.config.validation.enable_data_quality_analysis and generated_data:
-                with self.performance_profiler.profile(f'table_{table_name}_quality_analysis'):
-                    quality_analysis = self.data_quality_analyzer.analyze_distribution(
-                        generated_data[:min(5000, len(generated_data))],  # Sample for analysis
-                        table_metadata
-                    )
-                    self.generation_stats['quality_scores'][table_name] = quality_analysis.get('data_quality_score',
-                                                                                               0.0)
-
-                    # Log quality insights
-                    self._log_quality_insights(table_name, quality_analysis)
-
-            # Advanced security processing
-            if self.config.security.enable_data_masking:
-                with self.performance_profiler.profile(f'table_{table_name}_security_processing'):
-                    generated_data = self._apply_comprehensive_security_measures(generated_data, table_metadata)
-
-            # Business rule validation if enabled
-            if hasattr(self.config.validation,
-                       'enable_business_rules') and self.config.validation.enable_business_rules:
-                with self.performance_profiler.profile(f'table_{table_name}_business_rules'):
-                    self._validate_business_rules(generated_data, table_metadata)
-
-            # Anomaly detection if enabled
-            if hasattr(self.config.validation,
-                       'enable_anomaly_detection') and self.config.validation.enable_anomaly_detection:
-                with self.performance_profiler.profile(f'table_{table_name}_anomaly_detection'):
-                    self._detect_and_log_anomalies(generated_data, table_metadata)
+    def _accumulate_metrics(self, metrics: Dict[str, Any]):
+        """Accumulate metrics from batch processing"""
+        for key, value in metrics.items():
+            if key in self.generation_stats:
+                if isinstance(value, (int, float)):
+                    self.generation_stats[key] += value
+                elif isinstance(value, list):
+                    self.generation_stats[key].extend(value)
+            elif key == 'quality_score' and value is not None:
+                # Store quality scores for later averaging
+                if 'quality_scores_batch' not in self.generation_stats:
+                    self.generation_stats['quality_scores_batch'] = []
+                self.generation_stats['quality_scores_batch'].append(value)
             else:
-                self.logger.info(f"💾 Data already written during streaming - skipping duplicate export")
+                self.generation_stats[key] = value
 
-            # Update statistics
-            self.generation_stats['tables_processed'] += 1
-            self.generation_stats['total_records_generated'] += len(generated_data)
-            self.generation_stats['total_duration'] += duration
+    def _update_final_stats(self, table_name: str, records_count: int, duration: float):
+        """Update final statistics for completed table"""
+        self.generation_stats.update({
+            'tables_processed': self.generation_stats['tables_processed'] + 1,
+            'total_records_generated': self.generation_stats['total_records_generated'] + records_count,
+            'total_duration': self.generation_stats['total_duration'] + duration
+        })
 
-            # Track memory usage
+        # Update memory peak if available
+        try:
             current_memory = self.parallel_generator.memory_monitor.get_memory_usage()
-            self.generation_stats['memory_peak_mb'] = max(
-                self.generation_stats['memory_peak_mb'], current_memory
-            )
+            if current_memory > self.generation_stats['memory_peak_mb']:
+                self.generation_stats['memory_peak_mb'] = current_memory
+        except AttributeError:
+            # Memory monitor might not be available
+            pass
 
-            # Extract foreign key data for subsequent tables
-            generated_fk_data = self._extract_foreign_key_data(generated_data, table_metadata)
+        # Calculate average quality score for this table if available
+        batch_scores = self.generation_stats.get('quality_scores_batch', [])
+        if batch_scores:
+            avg_quality = sum(batch_scores) / len(batch_scores)
+            self.generation_stats['quality_scores'][table_name] = avg_quality
+            # Clear batch scores for next table
+            self.generation_stats['quality_scores_batch'] = []
 
-            strategy_name = "streaming" if self.streaming_used else "parallel/adaptive"
-            self.logger.info(f"✅ Completed {table_name}: {len(generated_data):,} records in {duration:.2f}s using {strategy_name} strategy")
+    def _log_progress(self, batch_count: int, batch_size: int, total_records: int):
+        """Log generation progress"""
+        if batch_count % 50 == 0:  # Log every 50 batches
+            total_so_far = batch_count * batch_size
+            progress_pct = min((total_so_far / total_records) * 100, 100)
 
-            # Log performance summary
-            if quality_analysis:
-                self.logger.info(f"📊 Quality score: {quality_analysis.get('data_quality_score', 0):.3f}")
-
-            return generated_data, generated_fk_data
-
-        except Exception as e:
-            print_exc()
-            self.logger.error(f"❌ Failed to generate data for {table_name}: {e}")
-            self.generation_stats['errors'].append(f"{table_name}: {str(e)}")
-            raise
-
-    def _select_and_execute_generation_strategy(self, table_metadata: Dict[str, Any],
-                                                total_records: int,
-                                                foreign_key_data: Dict[str, List],
-                                                output_dir: str) -> list[dict]:
-        """Select and execute the optimal generation strategy"""
-
-        # Analyze dataset characteristics
-        estimated_memory_mb = self.parallel_generator._estimate_memory_requirements(table_metadata, total_records)
-        available_memory_mb = self.parallel_generator.memory_monitor.max_memory_mb
-
-        # Strategy selection logic
-        if self.config.performance.enable_streaming and total_records > 100000:
-            self.streaming_used = True
-            return self._generate_with_enhanced_streaming(table_metadata, total_records, foreign_key_data)
-        elif self.config.performance.enable_parallel and total_records > 10000:
-            return self._generate_with_enhanced_parallel(table_metadata, total_records, foreign_key_data)
-        else:
-            return self._generate_with_adaptive_strategy(table_metadata, total_records, foreign_key_data)
-
-    def _generate_with_enhanced_streaming(self, table_metadata: Dict[str, Any],
-                                          total_records: int,
-                                          foreign_key_data: Dict[str, List]) -> List[Dict]:
-        """Generate data using enhanced streaming approach"""
-        self.logger.info(f"📊 Using ENHANCED STREAMING generation strategy")
-
-        table_name = table_metadata["table_name"]
-        output_path = self.config.output.get_output_path(table_name)
-
-        all_data = []
-        batch_count = 0
-        quality_scores = []
-
-        # Prepare masking configuration
-        enable_masking = self.config.security.enable_data_masking
-        sensitivity_map = None
-
-        if enable_masking:
-            # Build sensitivity map from column metadata
-            sensitivity_map = {}
-            for column in table_metadata.get('columns', []):
-                sensitivity_level = column.get('sensitivity', 'PUBLIC')
-                sensitivity_map[column['name']] = sensitivity_level
-
-            self.logger.info(
-                f"🔒 Masking enabled for streaming. Sensitive columns: {len([k for k, v in sensitivity_map.items() if v in ['PII', 'SENSITIVE']])}")
-
-        # Use enhanced streaming generator
-        for batch in self.parallel_generator.generate_streaming(
-                table_metadata=table_metadata,
-                total_records=total_records,
-                foreign_key_data=foreign_key_data
-        ):
-            batch_count += 1
-
-            # Validate batch if strict mode enabled
-            if self.config.validation.strict_mode:
-                self._validate_batch(batch, table_metadata, batch_count)
-
-            # Real-time quality monitoring
-            if batch_count % 10 == 0 and self.config.validation.enable_data_quality_analysis:
-                batch_quality = self.data_quality_analyzer.analyze_distribution(batch[:100], table_metadata)
-                quality_scores.append(batch_quality.get('data_quality_score', 0))
-
-                if quality_scores:
-                    avg_quality = sum(quality_scores) / len(quality_scores)
-                    self.logger.info(f"📈 Batch {batch_count}: Quality score {avg_quality:.3f}")
-
-            # Keep sample for final analysis (avoid memory issues)
-            if len(all_data) < 10000:
-                all_data.extend(batch[:min(len(batch), 10000 - len(all_data))])
-
-            # Progress logging for large datasets
-            total_so_far = batch_count * len(batch)
-            if batch_count % 20 == 0:
-                progress_pct = (total_so_far / total_records) * 100
+            try:
                 memory_usage = self.parallel_generator.memory_monitor.get_memory_usage()
                 self.logger.info(
-                    f"📈 Streaming progress: {total_so_far:,}/{total_records:,} ({progress_pct:.1f}%) - Memory: {memory_usage:.1f}MB")
-
-            # Log completion with file information
-            self._log_streaming_completion(table_name, total_so_far, output_path)
-
-            if enable_masking:
-                sensitive_columns = [k for k, v in sensitivity_map.items() if v in ['PII', 'SENSITIVE']]
-                masking_operations = batch_count * len(sensitive_columns)
-                self.generation_stats['security_operations'] += masking_operations
-                self.logger.info(f"🔒 Applied {masking_operations:,} masking operations during streaming")
-
-        self.logger.info(f"💾 Enhanced streaming completed. Data saved to: {output_path}")
-        return all_data
-
-    def _log_streaming_completion(self, table_name: str, total_records: int, output_path: str):
-        """Log completion of streaming data generation with file info"""
-        import os
-
-        try:
-            if os.path.exists(output_path):
-                file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-                self.logger.info(f"📁 Streaming file: {output_path}")
-                self.logger.info(f"📏 File size: {file_size_mb:.2f} MB")
-                self.logger.info(f"📊 Records written: {total_records:,}")
-            else:
-                self.logger.warning(f"⚠️ Expected output file not found: {output_path}")
-        except Exception as e:
-            self.logger.warning(f"⚠️ Could not get file info for {output_path}: {e}")
-
-    def _generate_with_enhanced_parallel(self, table_metadata: Dict[str, Any],
-                                         total_records: int,
-                                         foreign_key_data: Dict[str, List]) -> List[Dict]:
-        """Generate data using enhanced parallel processing"""
-        self.logger.info(f"⚡ Using ENHANCED PARALLEL generation strategy")
-
-        # Determine if we should use process-based parallelism for very large datasets
-        use_processes = total_records > 500000 and self.config.performance.max_workers > 2
-
-        if use_processes:
-            self.logger.info(f"🔄 Using process-based parallelism for {total_records:,} records")
-        else:
-            self.logger.info(f"🧵 Using thread-based parallelism for {total_records:,} records")
-
-        generated_data = self.parallel_generator.generate_parallel(
-            table_metadata=table_metadata,
-            total_records=total_records,
-            foreign_key_data=foreign_key_data,
-            use_processes=use_processes
-        )
-
-        return generated_data
-
-    def _generate_with_adaptive_strategy(self, table_metadata: Dict[str, Any],
-                                         total_records: int,
-                                         foreign_key_data: Dict[str, List]) -> List[Dict]:
-        """Generate data using adaptive strategy selection"""
-        self.logger.info(f"🤖 Using ADAPTIVE generation strategy")
-
-        all_data = []
-
-        # Prepare masking configuration
-        enable_masking = self.config.security.enable_data_masking
-        sensitivity_map = None
-
-        if enable_masking:
-            # Build sensitivity map from column metadata
-            sensitivity_map = {}
-            for column in table_metadata.get('columns', []):
-                sensitivity_level = column.get('sensitivity', 'PUBLIC')
-                sensitivity_map[column['name']] = sensitivity_level
-
-        # Enhanced adaptive generator with comprehensive monitoring
-        for batch in self.parallel_generator.generate_adaptive(
-                table_metadata=table_metadata,
-                total_records=total_records,
-                foreign_key_data=foreign_key_data
-        ):
-            if isinstance(batch, list) and len(batch) > 0:
-                all_data.extend(batch)
-
-            if enable_masking:
-                sensitive_columns = [k for k, v in sensitivity_map.items() if v in ['PII', 'SENSITIVE']]
-                masking_operations = total_records * len(sensitive_columns)
-                self.generation_stats['security_operations'] += masking_operations
-                self.logger.info(f"🔒 Applied {masking_operations:,} masking operations during streaming")
-
-        return all_data
-
-    def _apply_comprehensive_security_measures(self, data: List[Dict], table_metadata: Dict[str, Any]) -> List[Dict]:
-        """Apply comprehensive security measures"""
-        if not self.config.security.enable_data_masking:
-            return data
-
-        # Build sensitivity map from column metadata
-        sensitivity_map = {}
-        sensitive_columns = []
-
-        for column in table_metadata.get('columns', []):
-            sensitivity_level = column.get('sensitivity', 'PUBLIC')
-            sensitivity_map[column['name']] = sensitivity_level
-
-            if sensitivity_level in ['PII', 'SENSITIVE']:
-                sensitive_columns.append(column['name'])
-
-        # Apply masking
-        masked_data = self.security_manager.mask_sensitive_data(data, sensitivity_map)
-        if sensitive_columns:
-            masking_operations = len(data) * len(sensitive_columns)
-            self.generation_stats['security_operations'] += masking_operations
-            self.logger.info(f"🔒 Applied {masking_operations:,} masking operations")
-
-        # Apply encryption if enabled and encryption key is set
-        if self.security_manager.encryption_key and sensitive_columns:
-            encrypted_data = self.security_manager.encrypt_sensitive_fields(
-                masked_data, sensitive_columns
-            )
-            self.generation_stats['security_operations'] += len(encrypted_data) * len(sensitive_columns)
-        else:
-            encrypted_data = masked_data
-
-        # Audit the operation
-        if hasattr(self.config.security, 'audit_enabled') and self.config.security.audit_enabled:
-            audit_record = self.security_manager.audit_data_generation(
-                generation_params={
-                    'table': table_metadata['table_name'],
-                    'security_enabled': True,
-                    'masking_rules': len(self.security_manager.masking_rules)
-                },
-                records_count=len(data),
-                sensitive_columns=sensitive_columns
-            )
-            self.logger.debug(f"🔒 Security audit: {audit_record['audit_id']}")
-
-        return encrypted_data
-
-    def _validate_business_rules(self, data: List[Dict], table_metadata: Dict[str, Any]):
-        """Validate business rules against generated data"""
-        # Example business rules - can be configured in table metadata
-        business_rules = table_metadata.get('business_rules', [])
-
-        if business_rules and data:
-            rule_violations = self.data_quality_analyzer.validate_business_rules(
-                data[:1000],  # Sample for performance
-                business_rules
-            )
-
-            violation_count = rule_violations.get('total_violations', 0)
-            compliance_rate = rule_violations.get('compliance_rate', 1.0)
-
-            if violation_count > 0:
-                self.logger.warning(
-                    f"⚖️ Business rule violations: {violation_count} (Compliance: {compliance_rate:.1%})")
-
-                # Log first few violations for debugging
-                for violation in rule_violations.get('violations', [])[:3]:
-                    self.logger.warning(f"   - {violation.get('rule_description', 'Unknown rule')}")
-
-    def _generate_default_business_rules(self, table_metadata: Dict[str, Any]) -> List[Dict]:
-        """Generate default business rules based on table structure"""
-        rules = []
-        columns = {col['name']: col for col in table_metadata.get('columns', [])}
-
-        # Age-based rules
-        if 'age' in columns and 'status' in columns:
-            rules.append({
-                'type': 'conditional',
-                'condition_column': 'age',
-                'condition_operator': '<',
-                'condition_value': 18,
-                'requirement_column': 'status',
-                'requirement_value': 'MINOR'
-            })
-
-        # Income-credit score correlation
-        if 'income' in columns and 'credit_score' in columns:
-            rules.append({
-                'type': 'range_dependency',
-                'income_column': 'income',
-                'score_column': 'credit_score',
-                'income_threshold': 100000,
-                'score_threshold': 700
-            })
-
-        return rules
-
-    def _detect_and_log_anomalies(self, data: List[Dict], table_metadata: Dict[str, Any]):
-        """Detect and log data anomalies"""
-        if not data:
-            return
-
-        anomalies = self.data_quality_analyzer.detect_anomalies(data[:2000])  # Sample for performance
-        anomaly_list = anomalies.get('anomalies', [])
-
-        if anomaly_list:
-            self.logger.warning(f"🔍 Detected {len(anomaly_list)} potential anomalies:")
-
-            for anomaly in anomaly_list[:5]:  # Log first 5
-                severity = anomaly.get('severity', 'unknown')
-                anomaly_type = anomaly.get('type', 'unknown')
-                self.logger.warning(f"   - {anomaly_type} ({severity})")
-
-    def _log_quality_insights(self, table_name: str, quality_analysis: Dict[str, Any]):
-        """Log detailed quality insights"""
-        if not quality_analysis:
-            return
-
-        score = quality_analysis.get('data_quality_score', 0)
-        issues = quality_analysis.get('issues', [])
-
-        self.logger.info(f"📊 {table_name} quality analysis:")
-        self.logger.info(f"   Overall score: {score:.3f}")
-        self.logger.info(f"   Records analyzed: {quality_analysis.get('record_count', 0):,}")
-
-        if issues:
-            self.logger.warning(f"   Quality issues found: {len(issues)}")
-            for issue in issues[:3]:  # Log first 3 issues
-                self.logger.warning(f"     - {issue}")
-
-        # Log column-specific insights
-        column_analysis = quality_analysis.get('column_analysis', {})
-        problematic_columns = [
-            col for col, analysis in column_analysis.items()
-            if analysis.get('quality_score', 1.0) < 0.8
-        ]
-
-        if problematic_columns:
-            self.logger.warning(f"   Columns needing attention: {', '.join(problematic_columns)}")
-
-    def _validate_batch(self, batch: List[Dict], table_metadata: Dict[str, Any], batch_num: int):
-        """Enhanced batch validation"""
-        if not batch:
-            return
-
-        validation_results = self.validator.validate_batch(batch, table_metadata)
-
-        if validation_results['invalid_records'] > 0:
-            error_rate = (validation_results['invalid_records'] / validation_results['total_records']) * 100
-
-            if error_rate > 5.0:  # More than 5% errors
-                self.logger.warning(f"⚠️ Batch {batch_num} has high error rate: {error_rate:.1f}%")
-
-                # Log first few errors
-                for error in validation_results['errors'][:3]:
-                    self.logger.warning(f"   - {error}")
-
-                if self.config.validation.strict_mode and error_rate > 10.0:
-                    raise ValueError(f"Batch validation failed: {error_rate:.1f}% error rate exceeds threshold")
+                    f"📈 Progress: {total_so_far:,}/{total_records:,} "
+                    f"({progress_pct:.1f}%) - Memory: {memory_usage:.1f}MB"
+                )
+            except AttributeError:
+                self.logger.info(
+                    f"📈 Progress: {total_so_far:,}/{total_records:,} ({progress_pct:.1f}%)"
+                )
 
     def _extract_foreign_key_data(self, data: List[Dict], table_metadata: Dict[str, Any]) -> Dict[str, List]:
-        """Extract foreign key data for subsequent table generation"""
+        """Extract foreign key data for use by dependent tables"""
         fk_data = {}
 
-        # Get primary key columns
+        if not data:
+            return fk_data
+
+        table_name = table_metadata.get('table_name', 'unknown')
         pk_columns = self._get_primary_key_columns(table_metadata)
-        table_name = table_metadata['table_name']
 
         for pk_col in pk_columns:
             values = [row.get(pk_col) for row in data if row.get(pk_col) is not None]
             if values:
                 fk_key = f"{table_name}.{pk_col}"
-                fk_data[fk_key] = values[:50000]  # Limit FK pool size for memory efficiency
+                # Limit values for memory efficiency
+                max_values = max(25000, len(values))
+                fk_data[fk_key] = values[:max_values]
 
         return fk_data
 
     def _get_primary_key_columns(self, table_metadata: Dict[str, Any]) -> List[str]:
         """Get primary key columns from table metadata"""
-        # Check composite primary key first
+        # Check for composite primary key first
         composite_pk = table_metadata.get("composite_primary_key", [])
         if composite_pk:
             return composite_pk
 
-        # Look for individual primary key columns
+        # Find PK columns from constraints
         pk_columns = []
         for column in table_metadata.get("columns", []):
             constraints = column.get("constraints", []) + column.get("constraint", [])
@@ -529,45 +239,227 @@ class OptimizedDataGenerationEngine:
 
     def get_comprehensive_statistics(self) -> Dict[str, Any]:
         """Get comprehensive generation statistics"""
-        # Get parallel generator stats
+        # Calculate average quality score
         parallel_stats = self.parallel_generator.get_performance_stats()
-
-        # Get constraint manager stats
         constraint_stats = self.data_generator.constraint_manager.get_constraint_statistics()
-
-        # Get performance profiling data
         profile_report = self.performance_profiler.get_profile_report()
+        validator_status = self.data_generator.validator.get_performance_stats()
+        pipeline_stats = self.processor_pipeline.get_detailed_processor_stats()
 
         return {
             'generation_summary': self.generation_stats,
             'parallel_generator_performance': parallel_stats,
+            'validator_stats': validator_status,
+            'pipeline_stats': pipeline_stats,
             'constraint_manager_performance': constraint_stats,
             'performance_profiling': profile_report,
             'memory_usage_mb': parallel_stats.get('memory_usage_mb', 0),
-            'peak_memory_mb': self.generation_stats['memory_peak_mb'],
             'average_quality_score': (
                 sum(self.generation_stats['quality_scores'].values()) /
                 len(self.generation_stats['quality_scores'])
                 if self.generation_stats['quality_scores'] else 0
             ),
             'security_operations_count': self.generation_stats['security_operations'],
-            'total_errors': len(self.generation_stats['errors'])
+            'total_tables': self.generation_stats['tables_processed'],
+            'total_records': self.generation_stats['total_records_generated'],
+            'total_duration': self.generation_stats['total_duration'],
+            'peak_memory_mb': self.generation_stats['memory_peak_mb'],
+            'records_per_second': (
+                self.generation_stats['total_records_generated'] /
+                self.generation_stats['total_duration']
+                if self.generation_stats['total_duration'] > 0 else 0
+            ),
+            'errors_count': len(self.generation_stats['errors'])
         }
 
     def cleanup(self):
-        """Clean up resources"""
-        if hasattr(self.parallel_generator, 'cleanup'):
-            self.parallel_generator.cleanup()
-        if hasattr(self.data_generator, 'cleanup'):
-            self.data_generator.cleanup()
-        if hasattr(self.performance_profiler, 'reset_profiles'):
-            # Don't reset profiles during cleanup, keep for final report
+        """Cleanup resources"""
+        try:
+            if hasattr(self.parallel_generator, 'cleanup'):
+                self.parallel_generator.cleanup()
+            if hasattr(self.data_generator, 'cleanup'):
+                self.data_generator.cleanup()
+        except Exception as e:
+            self.logger.warning(f"Cleanup warning: {e}")
+
+        # Clear internal caches
+        if hasattr(self.processor_pipeline, 'cleanup'):
+            # Add cleanup to processors if needed
             pass
+
+    def _get_cached_constraint_manager(self):
+        """Get cached constraint manager"""
+        cache_key = f"constraint_manager_{self.config.locale}_{self.config.performance.max_workers}"
+
+        def factory():
+            return ConstraintManager(
+                logger=self.logger,
+                max_memory_mb=self.config.performance.max_memory_mb,
+                enable_parallel=self.config.performance.enable_parallel
+            )
+
+        cached_component = self._component_cache.get_or_create(cache_key, factory)
+        return cached_component.data_generator
+
+    def _get_cached_validator(self):
+        """Get cached validator"""
+        cache_key = "unified_validator"
+
+        def factory():
+            return Validator(logger=self.logger)
+
+        cached_component = self._component_cache.get_or_create(cache_key, factory)
+        return cached_component.data_generator
+
+    def _get_cached_quality_analyzer(self):
+        """Get cached quality analyzer"""
+        cache_key = "data_quality_analyzer"
+
+        def factory():
+            return DataQualityAnalyzer(logger=self.logger)
+
+        cached_component = self._component_cache.get_or_create(cache_key, factory)
+        return cached_component.data_generator
+
+    def _get_cached_security_manager(self):
+        """Get cached security manager"""
+        cache_key = "security_manager"
+
+        def factory():
+            return SecurityManager(logger=self.logger)
+
+        cached_component = self._component_cache.get_or_create(cache_key, factory)
+        return cached_component.data_generator
+
+    def _create_optimized_data_generator(self):
+        """Create optimized data generator"""
+        generator = DataGenerator(
+            self.config,
+            self.config.locale,
+            ai_config=self.config.ai,
+            logger=self.logger
+        )
+
+        # Pre-warm caches for small datasets
+        if self.config.rows < 10000:
+            self._prewarm_generator_caches(generator)
+
+        return generator
+
+    def _create_optimized_parallel_generator(self):
+        """Create optimized parallel generator"""
+        optimal_workers = min(
+            self.config.performance.max_workers,
+            os.cpu_count() * 2
+        )
+
+        return ParallelDataGenerator(
+            data_generator_instance=self.data_generator,
+            max_workers=optimal_workers,
+            max_memory_mb=self.config.performance.max_memory_mb,
+            enable_streaming=self.config.performance.enable_streaming,
+            performance_profiler=self.performance_profiler,
+            logger=self.logger
+        )
+
+    def _prewarm_generator_caches(self, generator):
+        """Pre-warm generator caches"""
+        try:
+            sample_metadata = {
+                "table_name": "warmup",
+                "columns": [
+                    {"name": "id", "type": "int", "constraints": []},
+                    {"name": "name", "type": "varchar", "constraints": []}
+                ]
+            }
+            list(self.parallel_generator.generate_adaptive(
+                sample_metadata, 10, {}
+            ))
+        except Exception:
+            pass
+
+    def _configure_security(self):
+        """Configure security with batch operations"""
+        self.security_manager.enable_masking = True
+
+        masking_rules = [
+            ('email', 'partial'), ('phone', 'partial'), ('ssn', 'partial'),
+            ('credit', 'partial'), ('income', 'hash'), ('salary', 'hash')
+        ]
+
+        for field, rule_type in masking_rules:
+            self.security_manager.add_masking_rule(field, rule_type)
+
+        if hasattr(self.config.security, 'encryption_key') and self.config.security.encryption_key:
+            self.security_manager.set_encryption_key(self.config.security.encryption_key.encode())
+
+    def _setup_performance_optimizations(self):
+        """Setup performance optimizations"""
+        pd.options.mode.chained_assignment = None
+        gc.set_threshold(700, 10, 10)
+
+        self._batch_cache = {}
+        self._fk_cache = {}
+
+    def generate_data_for_table(self, table_metadata: Dict[str, Any],
+                                total_records: int,
+                                foreign_key_data: Dict[str, List] = None) -> Tuple[List[Dict], Dict]:
+        """Generate data for a table using the appropriate strategy"""
+        table_name = table_metadata["table_name"]
+        self.logger.info(f"🚀 Generating data for table '{table_name}' ({total_records:,} records)")
+
+        start_time = time.time()
+
+        try:
+            # Select appropriate generator
+            with self.performance_profiler.profile(f"table_generation_{table_name}"):
+                # PROFILE GENERATOR SELECTION
+                with self.performance_profiler.profile("generator_selection"):
+                    generator = self.generator_factory.select_generator(table_metadata, total_records)
+
+            # Generate data in batches
+            all_data = []
+            batch_count = 0
+
+            with self.performance_profiler.profile(f"batch_generation_loop_{table_name}"):
+                for batch in generator.generate(table_metadata, total_records, foreign_key_data):
+                    batch_count += 1
+
+                    with self.performance_profiler.profile(f"batch_processing_{table_name}"):
+                        processed_batch, batch_metrics = self.processor_pipeline.process_batch(
+                            batch, table_metadata, batch_count
+                        )
+
+                    # Accumulate data and metrics
+                    all_data.extend(processed_batch)
+                    self._accumulate_metrics({'pipeline_summary': batch_metrics})
+
+                    # Progress logging
+                    self._log_progress(batch_count, len(processed_batch), total_records)
+
+            # Update final statistics
+            duration = time.time() - start_time
+            self._update_final_stats(table_name, len(all_data), duration)
+
+            with self.performance_profiler.profile(f"fk_extraction_{table_name}"):
+                # Extract foreign key data
+                fk_data = self._extract_foreign_key_data(all_data, table_metadata)
+
+            self.logger.info(
+                f"✅ Completed {table_name}: {len(all_data):,} records in {duration:.2f}s "
+                f"using {generator.get_strategy_name()} strategy"
+            )
+
+            return all_data, fk_data
+
+        except Exception as e:
+            self.logger.error(f"❌ Failed to generate data for {table_name}: {e}")
+            raise
 
 
 class OptimizedDataGenerationOrchestrator:
     """
-    Enhanced orchestrator that uses the new parallel data generator
+    Optimized orchestrator with complete feature set
     """
 
     def __init__(self, config: GenerationConfig, logger: logging.Logger):
@@ -575,94 +467,334 @@ class OptimizedDataGenerationOrchestrator:
         self.logger = logger
         self.generation_engine = OptimizedDataGenerationEngine(config, logger)
 
-    def run_data_generation(self, total_records: int, output_dir: str) -> Dict[str, List]:
-        """Main orchestration method using enhanced parallel components"""
+        # Pre-compute table order
+        self.ordered_tables = self._process_tables_in_dependency_order()
 
-        # Setup
-        start_time = datetime.now()
+        # Pre-allocate data structures
+        self.all_foreign_key_data = {}
+        self.all_table_data = {}
 
-        self.logger.info(f"🚀 Starting ENHANCED data generation process")
-        self.logger.info(f"📊 Configuration: {total_records:,} records per table")
-        self.logger.info(f"⚡ Max workers: {self.config.performance.max_workers}")
-        self.logger.info(f"💾 Max memory: {self.config.performance.max_memory_mb}MB")
-        self.logger.info(f"🔄 Streaming enabled: {self.config.performance.enable_streaming}")
-        self.logger.info(f"🔒 Security enabled: {self.config.security.enable_data_masking}")
-        self.logger.info(f"🤖 OpenAI enabled: {self.config.ai.openai.enabled}")
-        self.logger.info(f"🤖 Mistral enabled: {self.config.ai.mistral.enabled}")
-        self.logger.info(f"📁 Output directory: {output_dir}")
+        # Initialize caches
+        self._fk_constraints_cache = {}
 
-        # Process tables in dependency order
-        ordered_tables = self._process_tables_in_dependency_order()
-        self.logger.info(f"📋 Processing {len(ordered_tables)} tables in dependency order")
+    def run_data_generation(self, total_records: int) -> Dict[str, List]:
+        """Main orchestration method"""
+        with self.generation_engine.performance_profiler.profile("total_generation_process"):
+            with self.generation_engine.performance_profiler.profile("orchestrator_initialization"):
+                start_time = datetime.now()
+                self.logger.info(f"🚀 Starting OPTIMIZED data generation process")
+                self.logger.info(f"📊 Configuration: {total_records:,} records per table")
+                self.logger.info(f"⚡ Max workers: {self.config.performance.max_workers}")
+                self.logger.info(f"💾 Max memory: {self.config.performance.max_memory_mb}MB")
+                self.logger.info(f"📋 Processing {len(self.ordered_tables)} tables in dependency order")
 
-        # Track data and statistics
-        all_foreign_key_data = {}
-        all_table_data = {}
+                # Log enabled features
+                self._log_enabled_features()
+
+                with self.generation_engine.performance_profiler.profile("processing_strategy_selection"):
+                    use_parallel = self._should_use_parallel_table_processing(total_records)
+
+                with self.generation_engine.performance_profiler.profile("table_processing"):
+                    try:
+                        # Process tables
+                        if use_parallel:
+                            self._process_tables_optimized_parallel(total_records)
+                        else:
+                            self._process_tables_optimized_sequential(total_records)
+
+                    except KeyboardInterrupt:
+                        self.logger.warning("⚠️ Data generation interrupted by user")
+                        return {}
+                    except Exception as e:
+                        self.logger.error(f"❌ Unexpected error during data generation: {e}")
+                        print_exc()
+                        raise
+                    finally:
+                        self.generation_engine.cleanup()
+
+                with self.generation_engine.performance_profiler.profile("final_report_generation"):
+                    end_time = datetime.now()
+                    total_duration = (end_time - start_time).total_seconds()
+                    self._generate_comprehensive_final_report(total_duration)
+
+                    self.logger.info(f"🎉 Optimized data generation completed in {total_duration:.2f} seconds!")
+                    return self.all_table_data
+
+    def _log_enabled_features(self):
+        """Log enabled features"""
+        features = []
+        if self.config.performance.enable_streaming:
+            features.append("Streaming")
+        if self.config.performance.enable_parallel:
+            features.append("Parallel")
+        if self.config.validation.enable_data_quality_analysis:
+            features.append("Quality")
+        if self.config.security.enable_data_masking:
+            features.append("Security")
+        if getattr(self.config.validation, 'enable_business_rules', False):
+            features.append("Rules")
+        if getattr(self.config.validation, 'enable_anomaly_detection', False):
+            features.append("Anomalies")
+        if self.config.ai.openai.enabled or self.config.ai.mistral.enabled:
+            features.append("AI")
+
+        if features:
+            self.logger.info(f"🔧 Features: {', '.join(features)}")
+
+    def _should_use_parallel_table_processing(self, total_records: int) -> bool:
+        """Decide whether to use parallel table processing"""
+        independent_tables, _ = self._separate_independent_tables()
+
+        return (
+                len(independent_tables) > 1 and
+                total_records < 100000 and
+                os.cpu_count() > 2 and
+                len(self.ordered_tables) > 2
+        )
+
+    def _process_tables_optimized_sequential(self, total_records: int):
+        """Optimized sequential table processing"""
+        with self.generation_engine.performance_profiler.profile("sequential_table_processing"):
+            for i, table_metadata in enumerate(self.ordered_tables, 1):
+                table_name = table_metadata["table_name"]
+                self.logger.info(f"📊 Processing table {i}/{len(self.ordered_tables)}: {table_name}")
+
+                # Get foreign key constraints
+                with self.generation_engine.performance_profiler.profile(f"table_processing_{table_name}"):
+
+                    # PROFILE FK CONSTRAINT COLLECTION
+                    with self.generation_engine.performance_profiler.profile(f"fk_collection_{table_name}"):
+
+                        foreign_key_data = self._collect_foreign_key_constraints_cached(table_metadata)
+
+                        if foreign_key_data:
+                            fk_count = sum(len(values) for values in foreign_key_data.values())
+                            self.logger.info(
+                                f"🔗 FK constraints: {len(foreign_key_data)} types, {fk_count:,} total values")
+
+                            # Validate referential integrity
+                            self._validate_referential_integrity_constraints(foreign_key_data, table_metadata)
+
+                        # Generate data
+                        with self.generation_engine.performance_profiler.profile(f"data_generation_{table_name}"):
+                            generated_records, generated_fk_data = self.generation_engine.generate_data_for_table(
+                                table_metadata, total_records, foreign_key_data
+                            )
+
+                        # Store results
+                        with self.generation_engine.performance_profiler.profile(f"data_storage_{table_name}"):
+                            self.all_table_data[table_name] = generated_records
+                            self._update_foreign_key_data_efficient(generated_fk_data)
+
+                        # Export data if not already streamed
+                        with self.generation_engine.performance_profiler.profile(f"data_export_{table_name}"):
+                            if not self.generation_engine.streaming_used:
+                                self._export_table_data_optimized(generated_records, table_metadata)
+
+                        # Memory management
+                        if i % 3 == 0:
+                            gc.collect()
+                            current_memory = self.generation_engine.parallel_generator.memory_monitor.get_memory_usage()
+                            self.logger.info(f"💾 Memory after cleanup: {current_memory:.1f}MB")
+
+    def _process_tables_optimized_parallel(self, total_records: int):
+        """Optimized parallel table processing"""
+        independent_tables, dependent_tables = self._separate_independent_tables()
+
+        if independent_tables:
+            self.logger.info(f"⚡ Processing {len(independent_tables)} independent tables in parallel")
+
+            max_parallel_workers = min(len(independent_tables), os.cpu_count(), 4)
+
+            with ThreadPoolExecutor(max_workers=max_parallel_workers) as executor:
+                futures = {}
+
+                for table_metadata in independent_tables:
+                    future = executor.submit(
+                        self._process_single_table_optimized,
+                        table_metadata, total_records, {}
+                    )
+                    futures[future] = table_metadata["table_name"]
+
+                for future in as_completed(futures, timeout=3600):
+                    table_name = futures[future]
+                    try:
+                        generated_records, generated_fk_data = future.result()
+                        self.all_table_data[table_name] = generated_records
+                        self._update_foreign_key_data_efficient(generated_fk_data)
+                        self.logger.info(f"✅ Parallel completed: {table_name}")
+                        if not self.generation_engine.streaming_used:
+                            # Get table metadata for export
+                            table_metadata = next(
+                                table for table in independent_tables
+                                if table["table_name"] == table_name
+                            )
+                            self._export_table_data_optimized(generated_records, table_metadata)
+
+                    except Exception as e:
+                        self.logger.error(f"❌ Failed to process {table_name} in parallel: {e}")
+
+        # Process dependent tables sequentially
+        if dependent_tables:
+            self.logger.info(f"📋 Processing {len(dependent_tables)} dependent tables sequentially")
+            for table_metadata in dependent_tables:
+                self._process_single_table_with_dependencies(table_metadata, total_records)
+
+    def _separate_independent_tables(self) -> Tuple[List[Dict], List[Dict]]:
+        """Separate tables into independent and dependent groups"""
+        independent = []
+        dependent = []
+
+        for table in self.ordered_tables:
+            foreign_keys = table.get("foreign_keys", [])
+            has_dependencies = any(
+                fk.get("parent_table", "") != table.get("table_name", "")
+                for fk in foreign_keys
+            )
+
+            if has_dependencies:
+                dependent.append(table)
+            else:
+                independent.append(table)
+
+        return independent, dependent
+
+    def _validate_referential_integrity_constraints(self, foreign_key_data: Dict[str, List],
+                                                    table_metadata: Dict[str, Any]):
+        """Validate referential integrity constraints"""
+        table_name = table_metadata.get("table_name", "unknown")
+        foreign_keys = table_metadata.get("foreign_keys", [])
+
+        integrity_issues = []
+
+        for fk in foreign_keys:
+            parent_table = fk.get("parent_table", "")
+            parent_column = fk.get("parent_column", "")
+            child_column = fk.get("column", fk.get("child_column", ""))
+            fk_key = f"{parent_table}.{parent_column}"
+
+            available_values = foreign_key_data.get(fk_key, [])
+
+            if not available_values and parent_table != table_name:
+                integrity_issues.append({
+                    'parent_table': parent_table,
+                    'parent_column': parent_column,
+                    'child_column': child_column,
+                    'issue': 'No available parent values'
+                })
+
+        if integrity_issues:
+            self.logger.warning(f"⚠️ Referential integrity issues found for {table_name}:")
+            for issue in integrity_issues:
+                self.logger.warning(
+                    f"   - {issue['child_column']} -> {issue['parent_table']}.{issue['parent_column']}: {issue['issue']}")
+
+            if (hasattr(self.config.validation, 'strict_referential_integrity') and
+                    self.config.validation.strict_referential_integrity):
+                raise ValueError(f"Referential integrity constraints cannot be satisfied for table {table_name}")
+        else:
+            self.logger.info(f"✅ Referential integrity constraints validated for {table_name}")
+
+    def _process_single_table_optimized(self, table_metadata: Dict[str, Any],
+                                        total_records: int,
+                                        foreign_key_data: Dict[str, List]) -> Tuple[List[Dict], Dict]:
+        """Process a single table with optimizations"""
+        return self.generation_engine.generate_data_for_table(
+            table_metadata, total_records, foreign_key_data
+        )
+
+    def _process_single_table_with_dependencies(self, table_metadata: Dict[str, Any],
+                                                total_records: int):
+        """Process a single table that has dependencies"""
+        table_name = table_metadata["table_name"]
+
+        foreign_key_data = self._collect_foreign_key_constraints_cached(table_metadata)
+
+        generated_records, generated_fk_data = self.generation_engine.generate_data_for_table(
+            table_metadata, total_records, foreign_key_data
+        )
+
+        self.all_table_data[table_name] = generated_records
+        self._update_foreign_key_data_efficient(generated_fk_data)
+
+        if not self.generation_engine.streaming_used:
+            self._export_table_data_optimized(generated_records, table_metadata)
+
+    def _update_foreign_key_data_efficient(self, generated_fk_data: Dict[str, List]):
+        """Efficiently update foreign key data"""
+        for key, values in generated_fk_data.items():
+            if key not in self.all_foreign_key_data:
+                self.all_foreign_key_data[key] = []
+
+            self.all_foreign_key_data[key].extend(values)
+
+            # Limit FK pool size for memory efficiency
+            max_fk_pool_size = max(50000, len(values) * 2)
+            if len(self.all_foreign_key_data[key]) > max_fk_pool_size:
+                self.all_foreign_key_data[key] = self.all_foreign_key_data[key][-max_fk_pool_size // 2:]
+
+    def _collect_foreign_key_constraints_cached(self, table_metadata: Dict[str, Any]) -> Dict[str, List]:
+        """Cached foreign key constraint collection"""
+        table_name = table_metadata.get("table_name", "unknown")
+        foreign_keys = table_metadata.get("foreign_keys", [])
+
+        fk_signature = tuple(
+            (fk.get("parent_table", ""), fk.get("parent_column", ""))
+            for fk in foreign_keys
+        )
+        cache_key = f"{table_name}_{hash(fk_signature)}"
+
+        if cache_key in self._fk_constraints_cache:
+            cached_constraints = self._fk_constraints_cache[cache_key].copy()
+            for fk_key in cached_constraints:
+                cached_constraints[fk_key] = self.all_foreign_key_data.get(fk_key, [])
+            return cached_constraints
+
+        constraints = {}
+        for fk in foreign_keys:
+            parent_table = fk.get("parent_table", "")
+            parent_column = fk.get("parent_column", "")
+            fk_key = f"{parent_table}.{parent_column}"
+
+            available_values = self.all_foreign_key_data.get(fk_key, [])
+            constraints[fk_key] = available_values
+
+        self._fk_constraints_cache[cache_key] = {fk_key: [] for fk_key in constraints.keys()}
+        return constraints
+
+    def _export_table_data_optimized(self, data: List[Dict], table_metadata: Dict):
+        """Optimized data export"""
+        if not data:
+            return
+
+        table_name = table_metadata["table_name"]
+        schema = {}
+        for column in table_metadata["columns"]:
+            schema.update({column['name']: column['type']})
 
         try:
-            # Process each table with enhanced capabilities
-            for i, table_metadata in enumerate(ordered_tables, 1):
-                table_name = table_metadata["table_name"]
-                self.logger.info(f"📊 Processing table {i}/{len(ordered_tables)}: {table_name}")
+            file_name = table_metadata.get('file_name', table_name)
+            with WriterFactory.create_writer(
+                    table_name=table_name,
+                    config=self.config.output,
+                    logger=self.logger,
+                    schema=schema,
+                    file_name=file_name,
+            ) as writer:
 
-                # Get foreign key constraints for this table
-                foreign_key_data = self._collect_foreign_key_constraints(
-                    table_metadata, all_foreign_key_data
-                )
-
-                if foreign_key_data:
-                    self.logger.info(f"🔗 Foreign key constraints for {table_name}:")
-                    for fk_key, values in foreign_key_data.items():
-                        self.logger.info(f"   {fk_key}: {len(values):,} available values")
-
-                # Generate data for this table using enhanced engine
-                generated_records, generated_fk_data = self.generation_engine.generate_data_for_table(
-                    table_metadata, total_records, foreign_key_data, output_dir
-                )
-
-                # Store results
-                all_table_data[table_name] = generated_records
-
-                # Update FK data for future tables
-                for key, values in generated_fk_data.items():
-                    if key not in all_foreign_key_data:
-                        all_foreign_key_data[key] = []
-                    all_foreign_key_data[key].extend(values)
-
-                    # Limit FK pool size to prevent memory issues
-                    if len(all_foreign_key_data[key]) > 100000:
-                        all_foreign_key_data[key] = all_foreign_key_data[key][-50000:]
-
-                if not self.generation_engine.streaming_used:
-                    self._export_table_data(generated_records, table_metadata)
-                    self.logger.info(f"💾 Data exported to file using normal writer")
+                if len(data) <= 10000:
+                    writer.write_batch(data)
                 else:
-                    self.logger.info(f"💾 Data already written during streaming - skipping normal export")
+                    batch_size = 25000
+                    for i in range(0, len(data), batch_size):
+                        batch = data[i:i + batch_size]
+                        writer.write_batch(batch)
 
-                # Memory status logging
-                current_memory = self.generation_engine.parallel_generator.memory_monitor.get_memory_usage()
-                self.logger.info(f"💾 Current memory usage: {current_memory:.1f}MB")
+            self.logger.info(f"💾 Exported {len(data):,} records")
 
-        except KeyboardInterrupt:
-            self.logger.warning("⚠️ Data generation interrupted by user")
-            return {}
         except Exception as e:
-            self.logger.error(f"❌ Unexpected error during data generation: {e}")
-            print_exc()
+            self.logger.error(f"❌ Export failed for {table_name}: {e}")
             raise
-        finally:
-            # Always clean up resources
-            self.generation_engine.cleanup()
-
-        # Generate comprehensive final report
-        end_time = datetime.now()
-        total_duration = (end_time - start_time).total_seconds()
-
-        self._generate_enhanced_final_report(total_duration)
-
-        self.logger.info(f"🎉 Enhanced data generation completed in {total_duration:.2f} seconds!")
-
-        return all_table_data
 
     def _process_tables_in_dependency_order(self) -> List[Dict]:
         """Order tables based on foreign key dependencies"""
@@ -671,7 +803,7 @@ class OptimizedDataGenerationOrchestrator:
         remaining = tables.copy()
         processed_names = set()
 
-        max_iterations = len(tables) * 2  # Prevent infinite loops
+        max_iterations = len(tables) * 2
         iteration = 0
 
         while remaining and iteration < max_iterations:
@@ -687,7 +819,6 @@ class OptimizedDataGenerationOrchestrator:
 
             if not progress_made:
                 self.logger.warning("⚠️ Possible circular dependency detected in table relationships")
-                # Add remaining tables anyway
                 processed.extend(remaining)
                 break
 
@@ -695,8 +826,8 @@ class OptimizedDataGenerationOrchestrator:
 
     def _can_process_table(self, table: Dict, processed_names: set) -> bool:
         """Check if table dependencies are met"""
-        table_name = table["table_name"]
         foreign_keys = table.get("foreign_keys", [])
+        table_name = table["table_name"]
 
         for fk in foreign_keys:
             parent_table = fk["parent_table"]
@@ -705,152 +836,45 @@ class OptimizedDataGenerationOrchestrator:
 
         return True
 
-    def _collect_foreign_key_constraints(self, table_metadata: Dict,
-                                         all_fk_data: Dict[str, List]) -> Dict[str, List]:
-        """Collect foreign key constraints for current table"""
-        constraints = {}
-        foreign_keys = table_metadata.get("foreign_keys", [])
-
-        for fk in foreign_keys:
-            parent_table = fk["parent_table"]
-            parent_column = fk["parent_column"]
-            fk_key = f"{parent_table}.{parent_column}"
-
-            available_values = all_fk_data.get(fk_key, [])
-            constraints[fk_key] = available_values
-
-            # Log FK availability
-            if available_values:
-                self.logger.debug(f"🔗 FK constraint {fk_key}: {len(available_values):,} values available")
-            else:
-                self.logger.warning(f"⚠️ FK constraint {fk_key}: No values available")
-
-        return constraints
-
-    def _export_table_data(self, data: List[Dict], table_metadata: Dict):
-        """Export table data to file using appropriate writer"""
-        if not data:
-            self.logger.warning(f"⚠️ No data to export for table {table_metadata.get('table_name', 'unknown')}")
-            return
-
-        table_name = table_metadata["table_name"]
-        schema = {}
-        for column in table_metadata["columns"]:
-            schema.update({column['name']: column['type']})
-        try:
-            with WriterFactory.create_writer(
-                table_name=table_name,
-                config=self.config.output,  # Uses format from config
-                logger=self.logger,
-                schema=schema
-            ) as writer:
-                # Write all data as a single batch
-                writer.write_batch(data)
-
-            self.logger.info(f"💾 Exported {len(data):,} records to {self.config.output.format.upper()} format")
-
-        except Exception as e:
-            self.logger.error(f"❌ Failed to export {table_name}: {e}")
-
-    def _export_table_data_advanced(self, data: List[Dict], table_metadata: Dict):
-        """Advanced export with batching and progress tracking"""
-        if not data:
-            return
-
-        table_name = table_metadata["table_name"]
-        batch_size = 10000
-        schema = {}
-        for column in table_metadata["columns"]:
-            schema.update({column['name']: column['type']})
-        try:
-            with WriterFactory.create_writer(
-                table_name=table_name,
-                config=self.config.output,
-                compression=getattr(self.config.output, 'compression', None),
-                logger=self.logger,
-                schema=schema
-            ) as writer:
-
-                # Write in batches for large datasets
-                for i in range(0, len(data), batch_size):
-                    batch = data[i:i + batch_size]
-                    writer.write_batch(batch)
-
-                    if i % (batch_size * 5) == 0:  # Log every 5 batches
-                        progress = (i + len(batch)) / len(data) * 100
-                        self.logger.info(f"📊 Export progress: {progress:.1f}%")
-
-            self.logger.info(f"💾 Exported {len(data):,} records successfully")
-
-        except Exception as e:
-            self.logger.error(f"❌ Export failed for {table_name}: {e}")
-            raise
-
-    def _export_with_legacy_compatibility(self, data: List[Dict], table_metadata: Dict):
-        """Migration helper - maintains legacy interface temporarily"""
-        if not data:
-            return
-
-        table_name = table_metadata["table_name"]
-        schema = {}
-        for column in table_metadata["columns"]:
-            schema.update({column['name']: column['type']})
-
-        # Convert List[Dict] to DataFrame (legacy compatibility)
-        df = pd.DataFrame(data)
-
-        # Create unified writer with legacy-style batching
-        with WriterFactory.create_writer(
-            table_name=table_name,
-            config=self.config.output,
-            logger=self.logger,
-            schema=schema
-        ) as writer:
-
-            # Batch the DataFrame like legacy writers did
-            batch_size = 10000
-            for start in range(0, len(df), batch_size):
-                batch_df = df.iloc[start:start + batch_size]
-                batch_records = batch_df.to_dict('records')
-                writer.write_batch(batch_records)
-
-        self.logger.info(f"💾 Legacy-compatible export completed: {len(data):,} records")
-
-    def _generate_enhanced_final_report(self, total_duration: float):
-        """Generate comprehensive enhanced final report"""
+    def _generate_comprehensive_final_report(self, total_duration: float):
+        """Generate comprehensive final report"""
         stats = self.generation_engine.get_comprehensive_statistics()
-        output_dir = self.config.output.directory
 
-        # Enhanced report with all new capabilities
+        # Comprehensive report structure
         report = {
-            "generation_timestamp": datetime.now().isoformat(),
-            "generator_type": "ParallelDataGenerator",
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "generator_version": "OptimizedDataGenerator",
+                "total_duration_seconds": total_duration
+            },
             "configuration_summary": {
                 "total_tables": len(self.config.tables),
                 "records_per_table": self.config.rows,
                 "output_format": self.config.output.format,
                 "max_workers": self.config.performance.max_workers,
-                "streaming_enabled": self.config.performance.enable_streaming,
-                "parallel_enabled": self.config.performance.enable_parallel,
-                "quality_analysis_enabled": self.config.validation.enable_data_quality_analysis,
-                "security_enabled": self.config.security.enable_data_masking,
-                "business_rules_enabled": getattr(self.config.validation, 'enable_business_rules', False),
-                "anomaly_detection_enabled": getattr(self.config.validation, 'enable_anomaly_detection', False),
-                "ai_enabled": {
-                    'openai': self.config.ai.openai.enabled,
-                    'mistral': self.config.ai.mistral.enabled
+                "max_memory_mb": self.config.performance.max_memory_mb,
+                "features_enabled": {
+                    "streaming": self.config.performance.enable_streaming,
+                    "parallel": self.config.performance.enable_parallel,
+                    "quality_analysis": self.config.validation.enable_data_quality_analysis,
+                    "security_masking": self.config.security.enable_data_masking,
+                    "business_rules": getattr(self.config.validation, 'enable_business_rules', False),
+                    "anomaly_detection": getattr(self.config.validation, 'enable_anomaly_detection', False),
+                    "ai_integration": {
+                        'openai': self.config.ai.openai.enabled,
+                        'mistral': self.config.ai.mistral.enabled
+                    }
                 }
             },
             "performance_summary": {
-                "total_duration_seconds": total_duration,
                 "total_records_generated": stats['generation_summary']['total_records_generated'],
-                "average_records_per_second": stats['generation_summary'][
-                                                  'total_records_generated'] / total_duration if total_duration > 0 else 0,
+                "average_records_per_second": (
+                    stats['generation_summary']['total_records_generated'] / total_duration
+                    if total_duration > 0 else 0
+                ),
                 "peak_memory_usage_mb": stats.get('peak_memory_mb', 0),
-                "current_memory_usage_mb": stats.get('memory_usage_mb', 0),
                 "tables_processed": stats['generation_summary']['tables_processed'],
-                "memory_cleanups_performed": stats.get('parallel_generator_performance', {}).get('memory_cleanups', 0),
-                "errors_encountered": len(stats['generation_summary']['errors'])
+                "total_errors": len(stats['generation_summary']['errors'])
             },
             "quality_metrics": {
                 "average_quality_score": stats.get('average_quality_score', 0),
@@ -858,42 +882,53 @@ class OptimizedDataGenerationOrchestrator:
                 "total_quality_checks": len(stats['generation_summary'].get('quality_scores', {}))
             },
             "security_metrics": {
-                "security_operations_performed": stats.get('security_operations_count', 0),
+                "total_security_operations": stats.get('security_operations_count', 0),
                 "masking_enabled": self.config.security.enable_data_masking,
-                "encryption_enabled": bool(self.generation_engine.security_manager.encryption_key),
-                "audit_records_created": len(self.generation_engine.security_manager.audit_trail)
+                "encryption_enabled": bool(getattr(self.generation_engine.security_manager, 'encryption_key', None))
             },
-            "performance_profiling": stats.get('performance_profiling', {}),
-            "constraint_manager_performance": stats.get('constraint_manager_performance', {}),
-            "parallel_generator_performance": stats.get('parallel_generator_performance', {}),
+            "business_intelligence": {
+                "business_rules_violations": stats.get('business_rules_violations', 0),
+                "anomalies_detected": stats.get('anomalies_detected', 0)
+            },
             "detailed_statistics": stats,
             "error_details": stats['generation_summary'].get('errors', [])
         }
 
         # Save comprehensive report
-        report_path = os.path.join(output_dir, "enhanced_generation_report.json")
+        report_path = os.path.join(self.config.output.report_directory, "comprehensive_generation_report.json")
         try:
             with open(report_path, 'w') as f:
                 json.dump(report, f, indent=2, default=str)
-            self.logger.info(f"📊 Enhanced generation report saved to: {report_path}")
+            self.logger.info(f"📊 Comprehensive report saved to: {report_path}")
         except Exception as e:
-            self.logger.error(f"❌ Could not save enhanced report: {e}")
+            self.logger.error(f"❌ Could not save report: {e}")
 
-        # Save performance profiling report separately
-        self._save_performance_profiling_report(output_dir)
+        # Save specialized reports
+        self._save_post_processor_pipeline_report()
+        self._save_performance_profiling_report()
+        self._save_security_audit_trail()
 
-        # Save security audit trail if enabled
-        if self.config.security.enable_data_masking:
-            self._save_security_audit_trail(output_dir)
+        # Log summary to console
+        self._log_comprehensive_summary_to_console(report)
 
-        # Log enhanced summary to console
-        self._log_enhanced_summary_to_console(report)
+    def _save_post_processor_pipeline_report(self):
+        """Save detailed performance profiling report"""
+        try:
+            profile_report = self.generation_engine.processor_pipeline.get_detailed_processor_stats()
+            profile_path = os.path.join(self.config.output.report_directory, "post_processor_pipeline_report.json")
 
-    def _save_performance_profiling_report(self, output_dir: str):
+            with open(profile_path, 'w') as f:
+                json.dump(profile_report, f, indent=2, default=str)
+
+            self.logger.info(f"Post processor pipeline report saved to: {profile_path}")
+        except Exception as e:
+            self.logger.error(f"❌ Could not save post processor pipeline report: {e}")
+
+    def _save_performance_profiling_report(self):
         """Save detailed performance profiling report"""
         try:
             profile_report = self.generation_engine.performance_profiler.get_profile_report()
-            profile_path = os.path.join(output_dir, "performance_profiling_report.json")
+            profile_path = os.path.join(self.config.output.report_directory, "performance_profiling_report.json")
 
             with open(profile_path, 'w') as f:
                 json.dump(profile_report, f, indent=2, default=str)
@@ -902,44 +937,46 @@ class OptimizedDataGenerationOrchestrator:
         except Exception as e:
             self.logger.error(f"❌ Could not save performance profiling report: {e}")
 
-    def _save_security_audit_trail(self, output_dir: str):
+    def _save_security_audit_trail(self):
         """Save security audit trail"""
         try:
-            audit_path = os.path.join(output_dir, "security_audit_trail.json")
+            audit_path = os.path.join(self.config.output.report_directory, "security_audit_trail.json")
             self.generation_engine.security_manager.export_audit_trail(audit_path)
             self.logger.info(f"🔒 Security audit trail saved to: {audit_path}")
         except Exception as e:
             self.logger.error(f"❌ Could not save security audit trail: {e}")
 
-    def _log_enhanced_summary_to_console(self, report: Dict):
-        """Log enhanced summary information to console"""
-        perf = report["performance_summary"]
+    def _log_comprehensive_summary_to_console(self, report: Dict):
+        """Log comprehensive summary to console"""
         config = report["configuration_summary"]
+        perf = report["performance_summary"]
         quality = report["quality_metrics"]
         security = report["security_metrics"]
+        bi = report["business_intelligence"]
 
         self.logger.info("=" * 80)
-        self.logger.info("🎉 ENHANCED GENERATION SUMMARY")
+        self.logger.info("🎉 COMPREHENSIVE GENERATION SUMMARY")
         self.logger.info("=" * 80)
-        self.logger.info(f"Generator Type: {report['generator_type']}")
+        self.logger.info(f"Generator Type: {report['metadata']['generator_version']}")
         self.logger.info(f"Tables Processed: {perf['tables_processed']}")
         self.logger.info(f"Total Records: {perf['total_records_generated']:,}")
-        self.logger.info(f"Duration: {perf['total_duration_seconds']:.2f} seconds")
+        self.logger.info(f"Duration: {report['metadata']['total_duration_seconds']:.2f} seconds")
         self.logger.info(f"Speed: {perf['average_records_per_second']:,.0f} records/second")
         self.logger.info(f"Peak Memory: {perf['peak_memory_usage_mb']:.1f} MB")
-        self.logger.info(f"Memory Cleanups: {perf['memory_cleanups_performed']}")
         self.logger.info(f"Workers Used: {config['max_workers']}")
 
         # Feature status
         self.logger.info("─" * 40)
         self.logger.info("🔧 FEATURES ENABLED:")
-        self.logger.info(f"Streaming: {'✅' if config['streaming_enabled'] else '❌'}")
-        self.logger.info(f"Parallel: {'✅' if config['parallel_enabled'] else '❌'}")
-        self.logger.info(f"Quality Analysis: {'✅' if config['quality_analysis_enabled'] else '❌'}")
-        self.logger.info(f"Security/Masking: {'✅' if config['security_enabled'] else '❌'}")
-        self.logger.info(f"Business Rules: {'✅' if config.get('business_rules_enabled', False) else '❌'}")
-        self.logger.info(f"Anomaly Detection: {'✅' if config.get('anomaly_detection_enabled', False) else '❌'}")
-        self.logger.info(f"AI Model: {'✅' if any(config.get('ai_enabled', {}).values()) else '❌'}")
+        features = config["features_enabled"]
+        self.logger.info(f"Streaming: {'✅' if features['streaming'] else '❌'}")
+        self.logger.info(f"Parallel: {'✅' if features['parallel'] else '❌'}")
+        self.logger.info(f"Quality Analysis: {'✅' if features['quality_analysis'] else '❌'}")
+        self.logger.info(f"Security/Masking: {'✅' if features['security_masking'] else '❌'}")
+        self.logger.info(f"Business Rules: {'✅' if features.get('business_rules', False) else '❌'}")
+        self.logger.info(f"Anomaly Detection: {'✅' if features.get('anomaly_detection', False) else '❌'}")
+        ai_enabled = any(features.get('ai_integration', {}).values())
+        self.logger.info(f"AI Integration: {'✅' if ai_enabled else '❌'}")
 
         # Quality metrics
         if quality['total_quality_checks'] > 0:
@@ -948,7 +985,6 @@ class OptimizedDataGenerationOrchestrator:
             self.logger.info(f"Average Quality Score: {quality['average_quality_score']:.3f}/1.0")
             self.logger.info(f"Tables Analyzed: {quality['total_quality_checks']}")
 
-            # Show best and worst quality scores
             quality_scores = quality.get('quality_by_table', {})
             if quality_scores:
                 best_table = max(quality_scores.keys(), key=lambda k: quality_scores[k])
@@ -960,17 +996,25 @@ class OptimizedDataGenerationOrchestrator:
         if security['masking_enabled'] or security['encryption_enabled']:
             self.logger.info("─" * 40)
             self.logger.info("🔒 SECURITY METRICS:")
-            self.logger.info(f"Security Operations: {security['security_operations_performed']:,}")
+            self.logger.info(f"Security Operations: {security['total_security_operations']:,}")
             self.logger.info(f"Masking: {'✅' if security['masking_enabled'] else '❌'}")
             self.logger.info(f"Encryption: {'✅' if security['encryption_enabled'] else '❌'}")
-            self.logger.info(f"Audit Records: {security['audit_records_created']}")
+
+        # Business intelligence
+        if bi['business_rules_violations'] > 0 or bi['anomalies_detected'] > 0:
+            self.logger.info("─" * 40)
+            self.logger.info("🧠 BUSINESS INTELLIGENCE:")
+            if bi['business_rules_violations'] > 0:
+                self.logger.info(f"Business Rule Violations: {bi['business_rules_violations']:,}")
+            if bi['anomalies_detected'] > 0:
+                self.logger.info(f"Anomalies Detected: {bi['anomalies_detected']:,}")
 
         # Error summary
-        if perf['errors_encountered'] > 0:
+        if perf['total_errors'] > 0:
             self.logger.info("─" * 40)
-            self.logger.warning(f"⚠️ ERRORS: {perf['errors_encountered']}")
+            self.logger.warning(f"⚠️ ERRORS: {perf['total_errors']}")
             error_details = report.get('error_details', [])
-            for error in error_details[:3]:  # Show first 3 errors
+            for error in error_details[:3]:
                 self.logger.warning(f"   - {error}")
         else:
             self.logger.info("─" * 40)
@@ -981,18 +1025,17 @@ class OptimizedDataGenerationOrchestrator:
 
 def main(config: GenerationConfig, total_records: int = None) -> Dict[str, List]:
     """
-    Main function using the enhanced parallel data generator with streaming support
+    Main function using the optimized data generator with complete feature set
     """
     logger = logging.getLogger(__name__)
 
-    # Determine actual total records
     actual_total_records = total_records or config.rows
 
-    # Create enhanced orchestrator
+    # Create optimized orchestrator
     orchestrator = OptimizedDataGenerationOrchestrator(config, logger)
 
     # Log startup information
-    logger.info(f"🚀 Initializing Enhanced Data Generation Engine")
+    logger.info(f"🚀 Initializing Optimized Data Generation Engine")
     logger.info(f"📊 Target: {actual_total_records:,} records per table")
     logger.info(f"⚡ Workers: {config.performance.max_workers}")
     logger.info(f"💾 Memory Limit: {config.performance.max_memory_mb}MB")
@@ -1006,62 +1049,85 @@ def main(config: GenerationConfig, total_records: int = None) -> Dict[str, List]
         features_enabled.append("Quality Analysis")
     if config.security.enable_data_masking:
         features_enabled.append("Security")
-    if config.openai.enabled:
+    if getattr(config.validation, 'enable_business_rules', False):
+        features_enabled.append("Business Rules")
+    if getattr(config.validation, 'enable_anomaly_detection', False):
+        features_enabled.append("Anomaly Detection")
+    if config.ai.openai.enabled:
         features_enabled.append("OpenAI")
+    if config.ai.mistral.enabled:
+        features_enabled.append("Mistral AI")
 
     logger.info(f"🔧 Features: {', '.join(features_enabled) if features_enabled else 'Basic'}")
 
-    # Run enhanced data generation
-    return orchestrator.run_data_generation(actual_total_records, config.output.directory)
+    # Run optimized data generation
+    return orchestrator.run_data_generation(actual_total_records)
 
 
-def setup_logging(config: GenerationConfig) -> logging.Logger:
-    """Setup enhanced logging based on configuration"""
-    log_level = getattr(logging, config.logging.level.upper(), logging.INFO)
-    log_format = config.logging.format
+def setup_logging_with_fallback(config: GenerationConfig = None, log_level: str = "INFO") -> logging.Logger:
+    """Setup logging with fallback to defaults when config is not available"""
 
-    # Enhanced log format with more context
-    enhanced_format = "%(asctime)s | %(levelname)-8s | %(name)-10s | %(message)s"
-    if hasattr(config.logging, 'enhanced_format') and config.logging.enhanced_format:
-        log_format = enhanced_format
+    if config and hasattr(config, 'logging'):
+        # Use configuration-based logging
+        log_level_final = getattr(logging, config.logging.level.upper(), logging.INFO)
+        log_format = config.logging.format
 
-    # Configure logging with multiple handlers
-    handlers = [logging.StreamHandler(sys.stdout)]
+        # Enhanced log format with more context
+        enhanced_format = "%(asctime)s | %(levelname)-8s | %(name)-10s | %(message)s"
+        if hasattr(config.logging, 'enhanced_format') and config.logging.enhanced_format:
+            log_format = enhanced_format
 
-    if config.logging.file_path:
-        # Create log directory if it doesn't exist
-        log_dir = os.path.dirname(config.logging.file_path)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
+        # Configure logging with multiple handlers
+        handlers = [logging.StreamHandler(sys.stdout)]
 
-        # Add file handler
-        file_handler = logging.FileHandler(config.logging.file_path)
-        file_handler.setFormatter(logging.Formatter(log_format))
-        handlers.append(file_handler)
+        if config.logging.file_path:
+            log_dir = os.path.dirname(config.logging.file_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+
+            file_handler = logging.FileHandler(config.logging.file_path)
+            file_handler.setFormatter(logging.Formatter(log_format))
+            handlers.append(file_handler)
+    else:
+        # Fallback to basic logging
+        log_level_final = getattr(logging, log_level.upper(), logging.INFO)
+        log_format = "%(asctime)s | %(levelname)-8s | %(message)s"
+        handlers = [logging.StreamHandler(sys.stdout)]
+
+    # Clear existing handlers to avoid duplication
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
 
     # Configure root logger
     logging.basicConfig(
-        level=log_level,
+        level=log_level_final,
         format=log_format,
         handlers=handlers,
-        force=True  # Override any existing configuration
+        force=True
     )
 
     # Set specific logger levels for performance
     logging.getLogger('faker').setLevel(logging.WARNING)
     logging.getLogger('pandas').setLevel(logging.WARNING)
 
-    return logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
+    if config:
+        logger.info("📋 Configuration-based logging applied")
+    else:
+        logger.info("🔧 Fallback logging configured")
+
+    return logger
 
 
 def parse_arguments():
-    """Parse command line arguments with enhanced options"""
+    """Parse command line arguments with complete feature set"""
     parser = argparse.ArgumentParser(
-        description='Enhanced Data Generator with Streaming, Parallel Processing, and Advanced Analytics',
+        description='Optimized Data Generator with Complete Feature Set and Maximum Performance',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic generation
+  # Basic optimized generation
   python main.py --config config.json --rows 100000
 
   # Enhanced streaming with quality analysis
@@ -1070,7 +1136,7 @@ Examples:
   # Parallel generation with security features
   python main.py --config config.json --enable_parallel --enable_masking --max_workers 8
 
-  # Full feature demonstration
+  # Complete feature demonstration
   python main.py --config config.json --rows 500000 --enable_all_features --max_memory 1024
 
 Features:
@@ -1080,13 +1146,14 @@ Features:
   🔒 Security: Data masking and encryption
   🔍 Anomaly: Automatic anomaly detection
   ⚖️ Rules: Business rule validation
+  🧠 AI: OpenAI and Mistral integration
         """
     )
 
     # Basic arguments
     parser.add_argument('--config', '-c', required=True,
                         help='Path to configuration file (JSON)')
-    parser.add_argument('--output_dir', '-o', default='./output',
+    parser.add_argument('--output_dir', '-o',
                         help='Output directory for generated files')
     parser.add_argument('--rows', '-r', type=int,
                         help='Number of rows to generate per table')
@@ -1111,18 +1178,18 @@ Features:
                         help='Enable data quality analysis')
     parser.add_argument('--enable_masking', action='store_true',
                         help='Enable data masking for sensitive data')
-    parser.add_argument('--enable_encryption', action='store_true',
-                        help='Enable data masking for sensitive data')
     parser.add_argument('--enable_business_rules', action='store_true',
                         help='Enable business rule validation')
     parser.add_argument('--enable_anomaly_detection', action='store_true',
                         help='Enable anomaly detection')
+    parser.add_argument('--enable_encryption', action='store_true',
+                        help='Enable encryption')
     parser.add_argument('--enable_all_features', action='store_true',
                         help='Enable all advanced features')
 
     # Output options
-    parser.add_argument('--format', '-f',
-                        choices=['csv', 'json', 'jsonl', 'parquet', 'sql_query', 'fwf', 'fixed'],
+    parser.add_argument('--output_format', '-f',
+                        choices=['csv', 'json', 'jsonl', 'parquet', 'sql_query', 'fwf', 'fixed', 'dsv', 'tsv'],
                         help='Output file format')
     parser.add_argument('--compression',
                         choices=['gzip', 'snappy', 'lz4'],
@@ -1137,91 +1204,31 @@ Features:
                         help='Enable strict validation mode')
     parser.add_argument('--log_level',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                        help='Logging level')
+                        help='Logging level', default='INFO')
+
+    # AI Integration arguments
+    parser.add_argument('--ai_enabled', action='store_true',
+                        help='Enable AI integration')
+    parser.add_argument('--openai_enabled', action='store_true',
+                        help='Enable OpenAI integration')
+    parser.add_argument('--mistral_enabled', action='store_true',
+                        help='Enable Mistral AI integration')
+    parser.add_argument('--ai_primary_provider',
+                        choices=['openai', 'mistral'],
+                        help='Primary AI provider')
+    parser.add_argument('--openai_model',
+                        help='OpenAI model name (e.g., gpt-4, gpt-3.5-turbo)')
+    parser.add_argument('--mistral_model',
+                        help='Mistral model name (e.g., mistral-large, mistral-medium)')
 
     return parser.parse_args()
 
 
-def apply_command_line_overrides(config: GenerationConfig, args):
-    """Apply command line argument overrides to configuration"""
-
-    # Basic overrides
-    if args.rows:
-        config.rows = args.rows
-    if args.max_workers:
-        config.performance.max_workers = args.max_workers
-    if args.max_memory:
-        config.performance.max_memory_mb = args.max_memory
-    if args.batch_size:
-        config.performance.batch_size = args.batch_size
-    if args.format:
-        config.output.format = args.format
-    if args.output_dir:
-        config.output.change_directory(args.output_dir)
-    if args.log_level:
-        config.logging.level = args.log_level
-
-    # Feature flags
-    if args.enable_streaming:
-        config.performance.enable_streaming = True
-    if args.enable_parallel:
-        config.performance.enable_parallel = True
-    if args.enable_quality_analysis:
-        config.validation.enable_data_quality_analysis = True
-    if args.enable_masking:
-        config.security.enable_data_masking = True
-    if args.enable_encryption:
-        config.security.enable_encryption = True
-
-    # Advanced features
-    if args.enable_business_rules:
-        if not hasattr(config.validation, 'enable_business_rules'):
-            config.validation.enable_business_rules = True
-        else:
-            config.validation.enable_business_rules = True
-
-    if args.enable_anomaly_detection:
-        if not hasattr(config.validation, 'enable_anomaly_detection'):
-            config.validation.enable_anomaly_detection = True
-        else:
-            config.validation.enable_anomaly_detection = True
-
-    # Enable all features
-    if args.enable_all_features:
-        config.performance.enable_streaming = True
-        config.performance.enable_parallel = True
-        config.validation.enable_data_quality_analysis = True
-        config.security.enable_data_masking = True
-        if not hasattr(config.validation, 'enable_business_rules'):
-            config.validation.enable_business_rules = True
-        else:
-            config.validation.enable_business_rules = True
-        if not hasattr(config.validation, 'enable_anomaly_detection'):
-            config.validation.enable_anomaly_detection = True
-        else:
-            config.validation.enable_anomaly_detection = True
-
-    # Security options
-    if args.encryption_key:
-        if not hasattr(config.security, 'encryption_key'):
-            config.security.encryption_key = args.encryption_key
-        else:
-            config.security.encryption_key = args.encryption_key
-
-    # Validation options
-    if args.strict_validation:
-        config.validation.strict_mode = True
-
-    # Performance profiling
-    if args.profile_performance:
-        if not hasattr(config.performance, 'enable_profiling'):
-            config.performance.enable_profiling = True
-        else:
-            config.performance.enable_profiling = True
-
-
 if __name__ == "__main__":
-    print("🚀 ENHANCED DATA GENERATOR WITH STREAMING AND ADVANCED ANALYTICS")
+    print("🚀 OPTIMIZED DATA GENERATOR WITH COMPLETE FEATURE SET")
+    print("=" * 80)
+    print("🔧 Features: Streaming • Parallel • Quality • Security • Business Rules • Anomaly Detection • AI")
+    print("⚡ Performance: Optimized with advanced caching and intelligent processing")
     print("=" * 80)
 
     start_time = datetime.now()
@@ -1230,36 +1237,27 @@ if __name__ == "__main__":
         # Parse command line arguments
         args = parse_arguments()
 
+        initial_log_level = getattr(args, 'log_level', 'INFO')
+        logger = setup_logging_with_fallback(config=None, log_level=initial_log_level)
+
         # Load and configure
-        config_manager = ConfigurationManager()
+        config_manager = ConfigurationManager(logger=logger)
+
         config = config_manager.load_configuration(
             config_path=args.config,
-            environment=getattr(args, 'environment', None),
-            # Pass all arguments as keyword arguments
-            rows=args.rows,
-            max_workers=args.max_workers,
-            max_memory=args.max_memory,
-            batch_size=args.batch_size,
-            output_format=args.format,
-            output_dir=args.output_dir,
-            log_level=args.log_level,
-            enable_streaming=args.enable_streaming,
-            enable_parallel=args.enable_parallel,
-            enable_masking=args.enable_masking,
-            enable_quality_analysis=args.enable_quality_analysis,
-            enable_encryption=args.enable_encryption,
-            enable_all_features=args.enable_all_features
+            **args.__dict__
         )
-
         # Apply command line overrides
-        apply_command_line_overrides(config, args)
+        # apply_command_line_overrides(config, args)
 
-        # Setup enhanced logging
-        logger = setup_logging(config)
+        logger = setup_logging_with_fallback(config=config)
+        config_manager.logger = logger
 
-        # Log enhanced configuration summary
-        logger.info("📋 Enhanced Configuration Summary:")
-        logger.info(f"   Environment: {config.environment}")
+        # Setup logging
+
+        # Log configuration summary
+        logger.info("📋 Optimized Configuration Summary:")
+        logger.info(f"   Environment: {getattr(config, 'environment', 'default')}")
         logger.info(f"   Records per table: {config.rows:,}")
         logger.info(f"   Max workers: {config.performance.max_workers}")
         logger.info(f"   Max memory: {config.performance.max_memory_mb}MB")
@@ -1280,18 +1278,18 @@ if __name__ == "__main__":
             features.append("Business Rules")
         if getattr(config.validation, 'enable_anomaly_detection', False):
             features.append("Anomaly Detection")
-        if config.ai.openai.enabled:
+        if config.ai.openai and config.ai.is_openai_enabled():
             features.append('AI: OpenAI')
-        if config.ai.mistral.enabled:
-            features.append('AI: Mistral AI')
+        if config.ai.mistral and config.ai.is_mistral_enabled():
+            features.append('AI: Mistral')
 
-        logger.info(f"   Features enabled: {', '.join(features) if features else 'Basic'}")
+        logger.info(f"   Features enabled: {', '.join(features) if features else 'Basic (Optimized)'}")
 
         # Generate timestamp for output directory
         timestamp = start_time.strftime("%Y%m%d_%H%M%S")
 
-        # Run enhanced data generation
-        logger.info(f"🚀 Starting enhanced data generation...")
+        # Run optimized data generation
+        logger.info(f"🚀 Starting optimized data generation...")
 
         generated_data = main(
             config=config,
@@ -1305,19 +1303,19 @@ if __name__ == "__main__":
         logger.info(f"⏱️ Total execution time: {total_duration:.2f} seconds")
         logger.info(f"📁 Output saved to: {config.output.directory}")
 
-        # Enhanced success message
+        # Success message
         print("\n" + "=" * 80)
-        print("🎉 ENHANCED DATA GENERATION COMPLETED SUCCESSFULLY!")
+        print("🎉 OPTIMIZED DATA GENERATION COMPLETED SUCCESSFULLY!")
         print("=" * 80)
         print(f"✅ Generated data for {len(generated_data)} tables")
-        print(f"⚡ Performance improvements: Advanced streaming + parallel processing")
+        print(f"⚡ Performance improvements: Optimized streaming + parallel processing")
         print(f"💾 Memory optimized: Intelligent memory management and cleanup")
         print(f"📊 Quality assured: Comprehensive data quality analysis")
         print(f"🔒 Security ready: Data masking, encryption, and audit logging")
         print(f"📋 Business validated: Rule validation and anomaly detection")
-        print(f"⚡ Performance profiled: Detailed performance monitoring")
+        print(f"🧠 AI enhanced: OpenAI and Mistral integration")
         print(f"📁 Files saved to: {config.output.directory}")
-        print(f"⏱️ Completed in: {total_duration:.2f} seconds ({end_time - start_time})")
+        print(f"⏱️ Completed in: {total_duration:.2f} seconds")
         print("=" * 80)
 
         # Feature summary
@@ -1329,6 +1327,7 @@ if __name__ == "__main__":
             print("   • Security: Data masking and encryption")
             print("   • Business Rules: Custom validation logic")
             print("   • Anomaly Detection: Automatic outlier identification")
+            print("   • AI Integration: OpenAI and Mistral AI support")
             print("=" * 80)
 
     except FileNotFoundError as e:
