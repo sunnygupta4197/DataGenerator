@@ -441,7 +441,7 @@ jobs:
           echo "  - Workers: ${{ github.event.inputs.max_workers }}"
           echo "  - Memory: ${{ github.event.inputs.max_memory_mb }} MB"
           
-          python optimized_main.py \
+          python main.py \
             -c input.json \
             -r ${{ github.event.inputs.rows }} \
             --enable_all_features \
