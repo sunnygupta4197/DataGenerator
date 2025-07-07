@@ -198,6 +198,12 @@ class SecurityManager:
         """Create audit trail for data generation"""
         from datetime import datetime
         import uuid
+        import getpass
+        username = 'system'
+        try:
+            username = os.getenv('USER', os.getlogin())
+        except Exception:
+            username = getpass.getuser()
 
         audit_record = {
             'audit_id': str(uuid.uuid4()),
@@ -206,7 +212,7 @@ class SecurityManager:
             'generation_params': generation_params,
             'records_generated': records_count,
             'sensitive_columns': sensitive_columns,
-            'user': os.getenv('USER', os.getlogin()),
+            'user': username,
             'hostname': os.getenv('HOSTNAME', socket.gethostname()),
             'pid': os.getpid(),
             'compliance_level': self._assess_compliance_level(generation_params),

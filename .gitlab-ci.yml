@@ -15,6 +15,6 @@ unit_tests:
   artifacts:
     when: always
     paths:
-      - tests/
+      - output/
     reports:
       junit: junit.xml
