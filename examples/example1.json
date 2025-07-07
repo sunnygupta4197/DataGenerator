@@ -204,7 +204,7 @@
     "locale": "en_GB",
     "rows": 20000,
     "output": {
-        "format": "csv",
+        "format": "dsv",
         "enable_fixed_width": true,
         "directory": "./output/{timestamp}",
         "filename_template": "{table_name}",

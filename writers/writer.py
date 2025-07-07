@@ -336,7 +336,7 @@ class CSVStrategy:
 
             writer = csv.writer(
                 file_handle,
-                delimiter=getattr(config, 'csv_delimiter', ','),
+                delimiter=getattr(config, 'delimiter', ','),
                 quotechar=getattr(config, 'csv_quotechar', '"')
             )
             writer.writerow(formatted_headers)
@@ -345,7 +345,7 @@ class CSVStrategy:
         """Write CSV batch"""
         batch_df.to_csv(
             file_handle,
-            sep=getattr(config, 'csv_delimiter', ','),
+            sep=getattr(config, 'delimiter', ','),
             quotechar=getattr(config, 'csv_quotechar', '"'),
             index=False,
             header=False
@@ -1071,15 +1071,10 @@ class WriterFactory:
     def _create_strategy(cls, format_name: str, config: OutputConfig, logger: logging.Logger):
         """Create strategy based on format name"""
 
-        if format_name in ['csv']:
-            return CSVStrategy()
-
-        elif format_name == 'tsv':
-            # Handle TSV as CSV with tab delimiter
-            original_delimiter = getattr(config, 'csv_delimiter', ',')
-            config.delimiter = '\t'
+        if format_name in ['csv', 'dsv', 'tsv']:
+            original_delimiter = getattr(config, 'delimiter', ',')
+            config.delimiter = '\t' if format_name == 'tsv' else ',' if format_name == 'csv' else original_delimiter
             strategy = CSVStrategy()
-            # Note: delimiter will be used during writing
             return strategy
 
         elif format_name in ['json']:
