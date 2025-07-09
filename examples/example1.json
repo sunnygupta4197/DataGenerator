@@ -110,7 +110,7 @@
                 },
                 {
                     "name": "income",
-                    "type": "float",
+                    "type": "decimal(10,3)",
                     "nullable": true,
                     "rule": {
                         "type": "range",
