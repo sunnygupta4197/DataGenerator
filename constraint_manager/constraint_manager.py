@@ -981,10 +981,42 @@ class ConstraintManager:
 
     def _pad_intelligently(self, value: str, target_length: int, data_type: str) -> str:
         """Intelligent padding based on data type"""
+        print(data_type, value)
         if data_type in ['int', 'integer'] and value.isdigit():
             return value.zfill(target_length)
+        elif data_type in ['float', 'floating']:
+            return self._pad_float_value(value, target_length)
         else:
             return value.ljust(target_length, 'X')
+
+    def _pad_float_value(self, value: str, target_length: int) -> str:
+        value = value.strip()
+        try:
+            float_value = float(value)
+        except ValueError:
+            return value.ljust(target_length, 'X')
+
+        is_negative = value.startswith('-')
+        if is_negative:
+            value = value[1:]
+        if '.' in value:
+            integer_part, decimal_part = value.split('.')
+            decimal_space = len(decimal_part) + 1
+            available_for_integer = target_length - decimal_space
+            if is_negative:
+                available_for_integer = target_length - decimal_space
+            if available_for_integer > 0:
+                padded_integer = integer_part.zfill(available_for_integer)
+                result = f"{padded_integer}{decimal_part}"
+            else:
+                result = value[:target_length - (1 if is_negative else 0)]
+        else:
+            available_length = target_length - (1 if is_negative else 0)
+            result = value.zfill(available_length)
+
+        if is_negative:
+            result = f'-{result}'
+        return result[:target_length]
 
     def _get_primary_key_columns(self, table_metadata: Dict) -> List[str]:
         """Get primary key columns from table metadata with caching"""

@@ -394,7 +394,8 @@ class ValueGenerator:
         if data_type in ["int", "str"]:
             return random.randint(int(min_val), int(max_val))
         elif data_type in ["float", "str"]:
-            return round(random.uniform(min_val, max_val), 2)
+            precision = rule.get("precision", 2)
+            return round(random.uniform(min_val, max_val), precision)
         return min_val
 
     def _generate_regex_value(self, rule: dict) -> str:
