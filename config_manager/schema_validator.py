@@ -164,7 +164,13 @@ class SchemaValidator:
 
                     # Handle length constraints from SQL type
                     if length is not None and not column.get('length'):
-                        self._apply_correction(table_index, col_index, 'length', None, length,
+                        max_value = length if python_type not in ['int', 'float', 'integer'] else 10**(length - 1)
+                        new_rule = {"min": 0, "max": max_value}
+                        existing_rule = column.get('rule', {})
+                        rule = existing_rule.setdefault(new_rule)
+                        self._apply_correction(table_index, col_index, 'length', None, None,
+                                             'extracted_from_sql_type')
+                        self._apply_correction(table_index, col_index, 'rule', None, rule,
                                              'extracted_from_sql_type')
                         self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
                                               f"Length constraint {length} extracted from SQL type")
