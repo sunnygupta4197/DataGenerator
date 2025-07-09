@@ -205,7 +205,8 @@ class SchemaValidator:
         """Handle length constraints based on SQL type characteristics"""
         base_type_lower = base_type.lower()
 
-        print(python_type, base_type_lower)
+        sql_type_info = column.get('sql_type_info', {})
+        precision = sql_type_info.get('precision')
 
         # Variable-length string types (use max length)
         if base_type_lower in {'varchar', 'nvarchar', 'text', 'ntext', 'longtext', 'mediumtext', 'tinytext', 'clob'}:
@@ -221,19 +222,87 @@ class SchemaValidator:
             self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
                                     f"Fixed length {length} extracted from SQL type {base_type}")
 
-        # Numeric types with length (don't convert to rules here - let other validation handle it)
-        elif python_type in {'int', 'float', 'bigint'} and base_type_lower in {'int', 'integer', 'bigint', 'smallint',
-                                                                               'tinyint'}:
-            # For numeric types, store length but don't convert to rules yet
+        # Decimal/Numeric types (don't convert to digit ranges - precision is more important)
+        elif base_type_lower in {'decimal', 'numeric', 'number'}:
+            # For decimal types, length represents total digits, not something to convert to ranges
+            # Store as max length but don't convert to digit ranges
+            self._handle_decimal_type(column, table_name, col_name, table_index, col_index, base_type, length, precision)
+
+        # Float/Double types (length is not meaningful for these)
+        elif base_type_lower in {'float', 'double', 'real'}:
+            # For float types, length constraint is usually not meaningful
+            # Don't store length for these types
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Length constraint ignored for floating-point SQL type {base_type}")
+
+        # Integer types that can be converted to digit ranges
+        elif base_type_lower in {'int', 'integer', 'bigint', 'smallint', 'tinyint', 'mediumint', 'serial', 'bigserial'}:
+            # For integer types, store length and let other validation handle digit range conversion
             self._apply_correction(table_index, col_index, 'length', None, length, 'extracted_numeric_length_from_sql')
             self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
                                     f"Numeric length constraint {length} extracted from SQL type {base_type}")
+
+        # Variable-length binary types
+        elif base_type_lower in {'varbinary', 'blob', 'longblob', 'mediumblob', 'tinyblob'}:
+            length_constraint = {'max': length}
+            self._apply_correction(table_index, col_index, 'length', None, length_constraint,
+                                   'extracted_max_length_from_sql')
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Max length {length} extracted from SQL binary type {base_type}")
 
         # For other types, just store the length
         else:
             self._apply_correction(table_index, col_index, 'length', None, length, 'extracted_from_sql_type')
             self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
                                     f"Length constraint {length} extracted from SQL type {base_type}")
+
+    def _handle_decimal_type(self, column: Dict[str, Any], table_name: str, col_name: str,
+                             table_index: int, col_index: int, base_type: str, length: int, precision: Optional[int]):
+        """Handle decimal/numeric SQL types properly"""
+
+        if precision is not None and precision > 0:
+            # decimal(10,2) -> 10 total digits, 2 after decimal
+            integer_digits = length - precision
+
+            # Calculate proper range for decimal values
+            max_integer_part = 10 ** integer_digits - 1
+            max_decimal_part = 1 - (10 ** (-precision))  # 0.99 for precision=2
+            max_val = max_integer_part + max_decimal_part
+
+            min_val = 10 ** (-precision)  # 0.01 for precision=2
+
+            # Create range rule for decimal values
+            rule = {
+                "type": "range",
+                "min": min_val,
+                "max": max_val,
+                "precision": precision
+            }
+
+            # Store precision and total digits info
+            self._apply_correction(table_index, col_index, 'precision', None, precision, 'extracted_from_sql_decimal')
+            self._apply_correction(table_index, col_index, 'total_digits', None, length, 'extracted_from_sql_decimal')
+            self._apply_correction(table_index, col_index, 'rule', None, rule, 'generated_decimal_range')
+
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Decimal {base_type}({length},{precision}) -> range {min_val} to {max_val}")
+
+        else:
+            # decimal(10) without precision -> treat as integer-like
+            # But still store as decimal constraints, not digit range
+            self._apply_correction(table_index, col_index, 'total_digits', None, length, 'extracted_from_sql_decimal')
+
+            # Create integer-like range but keep as float type
+            rule = {
+                "type": "range",
+                "min": 10 ** (length - 1),
+                "max": 10 ** length - 1,
+            }
+
+            self._apply_correction(table_index, col_index, 'rule', None, rule, 'generated_decimal_integer_range')
+
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Decimal {base_type}({length}) -> integer-like range for float type")
 
     def validate_schema(self, schema: Dict[str, Any]) -> Tuple[
         List[str], List[str], List[str], List[str], Dict[str, Any]]:
@@ -686,7 +755,9 @@ class SchemaValidator:
         if isinstance(length_constraint, int):
             if length_constraint > 1:
                 # Check if this column type should use digit range conversion
+                print(self._should_convert_to_digit_range(column))
                 if self._should_convert_to_digit_range(column):
+
                     # Check if rule already exists and has appropriate range
                     existing_rule = column.get('rule', {})
 
