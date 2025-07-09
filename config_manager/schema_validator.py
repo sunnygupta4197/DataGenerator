@@ -1753,6 +1753,236 @@ class SchemaValidator:
 
         return conversions
 
+    import json
+import os
+from datetime import datetime
+from typing import Dict, Any, Optional, Union
+
+def save_schema_as_json(self, filepath: str, include_validation_info: bool = True, 
+                       include_corrections: bool = True, pretty_print: bool = True) -> bool:
+    """
+    Save the validated and corrected schema as JSON file
+    
+    Args:
+        filepath: Path where to save the JSON file
+        include_validation_info: Whether to include validation summary in the output
+        include_corrections: Whether to include correction information in columns
+        pretty_print: Whether to format JSON with indentation for readability
+        
+    Returns:
+        bool: True if saved successfully, False otherwise
+    """
+    try:
+        # Check if we have a corrected schema to save
+        if not self.corrected_schema:
+            self.errors.append("No corrected schema available to save. Run validation first.")
+            return False
+        
+        # Create output structure
+        output_data = {
+            "schema_version": "1.0",
+            "generated_at": datetime.now().isoformat(),
+            "validation_status": {
+                "passed": self.is_valid_schema(),
+                "has_critical_errors": self.has_critical_issues(),
+                "total_errors": len(self.errors),
+                "total_warnings": len(self.warnings),
+                "total_suggestions": len(self.suggestions),
+                "total_critical_errors": len(self.critical_errors)
+            }
+        }
+        
+        # Add the corrected schema
+        schema_data = copy.deepcopy(self.corrected_schema)
+        
+        # Optionally remove correction information from columns
+        if not include_corrections:
+            schema_data = self._remove_correction_info(schema_data)
+        
+        output_data["schema"] = schema_data
+        
+        # Optionally add detailed validation information
+        if include_validation_info:
+            output_data["validation_details"] = {
+                "critical_errors": self.critical_errors,
+                "errors": self.errors,
+                "warnings": self.warnings,
+                "suggestions": self.suggestions,
+                "statistics": self.get_table_statistics(),
+                "type_conversions": self.get_type_conversion_summary(),
+                "format_validations": self.get_format_validation_summary()
+            }
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # Write to file
+        with open(filepath, 'w', encoding='utf-8') as f:
+            if pretty_print:
+                json.dump(output_data, f, indent=2, ensure_ascii=False, default=self._json_serializer)
+            else:
+                json.dump(output_data, f, ensure_ascii=False, default=self._json_serializer)
+        
+        return True
+        
+    except Exception as e:
+        self.errors.append(f"Failed to save schema as JSON: {str(e)}")
+        return False
+
+def save_schema_only(self, filepath: str, pretty_print: bool = True) -> bool:
+    """
+    Save only the corrected schema without validation information
+    
+    Args:
+        filepath: Path where to save the JSON file
+        pretty_print: Whether to format JSON with indentation
+        
+    Returns:
+        bool: True if saved successfully, False otherwise
+    """
+    try:
+        if not self.corrected_schema:
+            self.errors.append("No corrected schema available to save. Run validation first.")
+            return False
+        
+        # Clean schema without correction info
+        clean_schema = self._remove_correction_info(copy.deepcopy(self.corrected_schema))
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # Write to file
+        with open(filepath, 'w', encoding='utf-8') as f:
+            if pretty_print:
+                json.dump(clean_schema, f, indent=2, ensure_ascii=False, default=self._json_serializer)
+            else:
+                json.dump(clean_schema, f, ensure_ascii=False, default=self._json_serializer)
+        
+        return True
+        
+    except Exception as e:
+        self.errors.append(f"Failed to save schema: {str(e)}")
+        return False
+
+def save_validation_report(self, filepath: str, pretty_print: bool = True) -> bool:
+    """
+    Save only the validation report without the schema
+    
+    Args:
+        filepath: Path where to save the JSON file
+        pretty_print: Whether to format JSON with indentation
+        
+    Returns:
+        bool: True if saved successfully, False otherwise
+    """
+    try:
+        report_data = {
+            "validation_report": {
+                "generated_at": datetime.now().isoformat(),
+                "summary": self.get_validation_summary(),
+                "critical_errors": self.critical_errors,
+                "errors": self.errors,
+                "warnings": self.warnings,
+                "suggestions": self.suggestions,
+                "statistics": self.get_table_statistics(),
+                "type_conversions": self.get_type_conversion_summary(),
+                "format_validations": self.get_format_validation_summary()
+            }
+        }
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # Write to file
+        with open(filepath, 'w', encoding='utf-8') as f:
+            if pretty_print:
+                json.dump(report_data, f, indent=2, ensure_ascii=False, default=self._json_serializer)
+            else:
+                json.dump(report_data, f, ensure_ascii=False, default=self._json_serializer)
+        
+        return True
+        
+    except Exception as e:
+        self.errors.append(f"Failed to save validation report: {str(e)}")
+        return False
+
+def _remove_correction_info(self, schema_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove correction information from schema data"""
+    for table in schema_data.get('tables', []):
+        for column in table.get('columns', []):
+            # Remove correction-related fields
+            column.pop('corrections', None)
+            column.pop('sql_type_info', None)
+    
+    return schema_data
+
+def _json_serializer(self, obj):
+    """Custom JSON serializer for handling special data types"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, set):
+        return list(obj)
+    elif hasattr(obj, '__dict__'):
+        return obj.__dict__
+    else:
+        return str(obj)
+
+def export_schema_formats(self, base_filepath: str, formats: Optional[List[str]] = None) -> Dict[str, bool]:
+    """
+    Export schema in multiple formats
+    
+    Args:
+        base_filepath: Base path without extension
+        formats: List of formats to export ['full', 'schema_only', 'report_only']
+                If None, exports all formats
+    
+    Returns:
+        Dict mapping format names to success status
+    """
+    if formats is None:
+        formats = ['full', 'schema_only', 'report_only']
+    
+    results = {}
+    
+    if 'full' in formats:
+        full_path = f"{base_filepath}_full.json"
+        results['full'] = self.save_schema_as_json(full_path, include_validation_info=True)
+    
+    if 'schema_only' in formats:
+        schema_path = f"{base_filepath}_schema.json"
+        results['schema_only'] = self.save_schema_only(schema_path)
+    
+    if 'report_only' in formats:
+        report_path = f"{base_filepath}_report.json"
+        results['report_only'] = self.save_validation_report(report_path)
+    
+    return results
+
+def load_schema_from_json(self, filepath: str) -> Optional[Dict[str, Any]]:
+    """
+    Load schema from JSON file
+    
+    Args:
+        filepath: Path to the JSON file
+        
+    Returns:
+        Dict containing the schema or None if failed
+    """
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # If it's a full export, extract just the schema
+        if 'schema' in data:
+            return data['schema']
+        else:
+            # Assume it's a schema-only file
+            return data
+            
+    except Exception as e:
+        self.errors.append(f"Failed to load schema from JSON: {str(e)}")
+        return None
+
     def validate_email_format(self, email: str) -> bool:
         """Validate email format using pre-compiled regex - optimized"""
         return bool(self._email_pattern.match(email))
