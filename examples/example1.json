@@ -12,7 +12,7 @@
                 },
                 {
                     "name": "address",
-                    "type": "str",
+                    "type": "varchar(50)",
                     "nullable": true,
                     "rule": {
                         "type": "address",

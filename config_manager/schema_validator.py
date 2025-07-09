@@ -4,6 +4,8 @@ from typing import Dict, Any, Tuple, List, Optional, Set
 import copy
 from datetime import datetime
 
+from pandas.io.stata import precision_loss_doc
+
 
 class SchemaValidator:
     def __init__(self):
@@ -46,6 +48,44 @@ class SchemaValidator:
             'A': r'(?:AM|PM)',
             'a': r'(?:am|pm)'
         }
+
+        self._sql_datatype_mapping = {
+            'varchar': str,
+            'nvarchar': str,
+            'nchar': str,
+            'char': str,
+            'text': str,
+            'ntext': str,
+            'string': str,
+            'clob': str,
+            'int': int,
+            'integer': int,
+            'bigint': int,
+            'smallint': int,
+            'tinyint': int,
+            'mediumint': int,
+            'float': float,
+            'decimal': float,
+            'double': float,
+            'real': float,
+            'numeric': float,
+            'boolean': bool,
+            'bool': bool,
+            'bit': bool
+        }
+
+    def parse_sql_type(self, sql_type: str) ->Tuple[str, Optional[int], Optional[int]]:
+        sql_type = sql_type.strip().lower()
+        pattern = r'([a-z]+)(?:\((\d+)(?:,(\d+))?\))?'
+        match = re.match(pattern, sql_type)
+        if not match:
+            raise ValueError(f'Invalid SQL type format: {sql_type}')
+
+        base_type = match.group(1)
+        length = int(match.group(2)) if match.group(2) else None
+        precision = int(match.group(3)) if match.group(3) else None
+
+        return base_type, length, precision
 
     def validate_schema(self, schema: Dict[str, Any]) -> Tuple[
         List[str], List[str], List[str], List[str], Dict[str, Any]]:
@@ -1247,6 +1287,9 @@ class SchemaValidator:
         """Validate type-rule consistency with auto-correction"""
         col_type = column.get('type', '').lower()
         rule = column.get('rule')
+
+        base_type, length, precision = self.parse_sql_type(col_type)
+        print(base_type, length, precision)
 
         if not rule or not isinstance(rule, dict):
             return
