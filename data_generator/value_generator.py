@@ -395,7 +395,6 @@ class ValueGenerator:
             return random.randint(int(min_val), int(max_val))
         elif data_type in ["float", "str"]:
             precision = rule.get("precision", 2)
-            print(precision)
             return round(random.uniform(min_val, max_val), precision)
         return min_val
 
