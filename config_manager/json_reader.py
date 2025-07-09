@@ -272,10 +272,10 @@ if __name__ == "__main__":
         print(f"💡 {suggestion}")
 
     # Show corrections using enhanced method
-    validator._show_applied_corrections(corrected_schema)
+    validator._show_applied_corrections()
 
     # Show conversion summary
-    conversions = validator.get_type_conversion_summary(corrected_schema)
+    conversions = validator.get_type_conversion_summary()
     if conversions:
         print(f"\n📊 TYPE CONVERSION SUMMARY:")
         print(f"{'Table.Column':<25} {'Original':<10} {'New':<10} {'Rule Type':<15} {'Reason':<30}")

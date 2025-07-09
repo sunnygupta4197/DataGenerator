@@ -8,7 +8,7 @@ from traceback import print_exc
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import gc
 import time
 
@@ -1153,6 +1153,8 @@ Features:
     # Basic arguments
     parser.add_argument('--config', '-c', required=True,
                         help='Path to configuration file (JSON)')
+    parser.add_argument('--save_config', '-s', action='store_true',
+                        help='Save new JSON Config')
     parser.add_argument('--output_dir', '-o',
                         help='Output directory for generated files')
     parser.add_argument('--rows', '-r', type=int,
