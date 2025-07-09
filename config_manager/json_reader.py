@@ -94,10 +94,10 @@ class JSONConfigReader:
 
         return True
 
-    def validate_schema(self, schema_dict):
+    def validate_schema(self, schema_dict, validator):
         try:
             errors, warnings, suggestions, critical_errors, corrected_schema = validate_schema_file(
-                schema_dict=schema_dict)
+                schema_dict=schema_dict, validator=validator)
             return self._handle_validation_results(errors, warnings, suggestions, critical_errors, corrected_schema)
         except Exception as validation_error:
             print(f"🚨 CRITICAL: Schema validation error: {validation_error}")
@@ -159,9 +159,9 @@ class JSONConfigReader:
             print(f"\n✅ No auto-corrections needed")
 
 
-def validate_schema_file(file_path: str = None, schema_dict: Dict = None):
+def validate_schema_file(file_path: str = None, schema_dict: Dict = None, validator: SchemaValidator = None):
     """Main function to validate schema from file or dictionary"""
-    validator = SchemaValidator()
+    validator = validator if validator else SchemaValidator()
 
     if file_path:
         try:

@@ -857,7 +857,15 @@ class ConfigurationManager:
             **kwargs
         )
 
-        raw_config = config_reader.validate_schema(raw_config)
+        raw_config = config_reader.validate_schema(raw_config, self.schema_validator)
+
+        if kwargs.get('save_config', False):
+            path = os.path.dirname(raw_config['output']['directory'])
+            output_file_name = 'generated_config.json'
+            output_file_path = os.path.join(path, output_file_name)
+            self.logger.info(f"Saving new generated config in file: {output_file_path}")
+            self.schema_validator.save_schema_only(output_file_path)
+            exit(0)
 
         # Parse configuration with overrides applied
         config = self._parse_config_dict(raw_config)
