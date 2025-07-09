@@ -168,6 +168,11 @@ class SchemaValidator:
                                              'extracted_from_sql_type')
                         self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
                                               f"Length constraint {length} extracted from SQL type")
+                        
+                    if base_type.lower() in ['decimal', 'numeric'] and precision is not None and precision > 0:
+                        self._apply_correction(table_index, col_index, 'precision', None, precision, 'extracted_from_sql_type')
+                        self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                                f'Precision constraint {precision} extracted from SQL type')
 
         except ValueError:
             # Not a valid SQL type, check if it's a valid Python type
@@ -575,27 +580,70 @@ class SchemaValidator:
         col_name = column['name']
         self._validate_and_convert_column_type(column, table_name, col_name, table_index, col_index)
 
-        updated_column = self.corrected_schema['tables'][table_index]['columns'][col_index]
-    
-        col_type = updated_column.get('type', '')
-        constraints = self._get_constraints(updated_column)
-        rule = updated_column.get('rule')
-        length_constraint = updated_column.get('length')
+        corrected_column = self.corrected_schema['tables'][table_index]['columns'][col_index]
 
-        # Validate and convert length constraint if needed
-        self._validate_and_convert_length_constraint(updated_column, table_name, col_name, table_index, col_index,
-                                                     length_constraint)
+        self._validate_and_convert_length_constraint(corrected_column, table_name, col_name, table_index, col_index, corrected_column.get('length'))
+
+        self._add_default_string_rules(corrected_column, table_name, col_name, table_index, col_index)
+
+        col_type = corrected_column.get('type', '')
+        constraints = self._get_constraints(corrected_column)
+        rule = corrected_column.get('rule')
+        length_constraint = corrected_column.get('length')
 
         # Constraint-based validation
-        constraint_info = self._analyze_constraints(constraints, updated_column)
-        self._handle_nullable_logic(updated_column, table_name, col_name, table_index, col_index, constraint_info)
+        constraint_info = self._analyze_constraints(constraints, corrected_column)
+        self._handle_nullable_logic(corrected_column, table_name, col_name, table_index, col_index, constraint_info)
 
         # Rule-based validation
         if rule and isinstance(rule, dict):
-            self._validate_rule(updated_column, table_name, col_name, table_index, col_index, rule, length_constraint)
+            self._validate_rule(corrected_column, table_name, col_name, table_index, col_index, rule, length_constraint)
 
         # Type-rule consistency
-        self._validate_type_rule_consistency(updated_column, table_name, col_name, table_index, col_index)
+        self._validate_type_rule_consistency(corrected_column, table_name, col_name, table_index, col_index)
+
+    def _add_default_string_rules(self, column: Dict[str, Any], table_name: str, col_name: str, table_index: int, col_index: int):
+        col_type = column.get('type', '')
+        existing_rules = column.get('rule')
+        length_constraint = column.get('length')
+
+        if col_type not in ['str', 'string'] or existing_rules:
+            return
+
+        default_rule = None
+        reason = None
+
+        if isinstance(length_constraint, int):
+            if length_constraint < 20:
+                default_rule = {"type": "word", "min": 0, "max": length_constraint}
+                reason = f"default_word_rule_for_{length_constraint}"
+                suggestion_msg = f"Added default 'word' for string column with length {length_constraint}"
+            else:
+                default_rule = {"type": "sentence", "min": 0, "max": length_constraint}
+                reason = f"default_sentence_rule_for_{length_constraint}"
+                suggestion_msg = f"Added default 'sentence' for string column with length {length_constraint}"
+        elif isinstance(length_constraint, dict):
+            max_length = length_constraint.get('max')
+            min_length = length_constraint.get('min')
+
+            ref_length = max_length if max_length is not None else min_length
+
+            if ref_length < 20:
+                default_rule = {"type": "word"}
+                reason = f"default_word_rule_for_max_length_{ref_length}"
+                suggestion_msg = f"Added default 'word' for string column with max length {ref_length}"
+            else:
+                default_rule = {"type": "sentence"}
+                reason = f"default_sentence_rule_for_max_length_{ref_length}"
+                suggestion_msg = f"Added default 'sentence' for string column with max length {ref_length}"
+        else:
+            default_rule = {"type": "sentence"}
+            reason = f"default_sentence_rule_no_length_constraint"
+            suggestion_msg = f"Added default 'sentence' for string column with no length"
+
+        if default_rule:
+            self._apply_correction(table_index, col_index, 'rule', None, default_rule, reason)
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': {suggestion_msg}")
 
     def _validate_and_convert_length_constraint(self, column: Dict[str, Any], table_name: str, col_name: str,
                                                 table_index: int, col_index: int, length_constraint):

@@ -21,6 +21,10 @@
                 },
                 {
                     "name": "comment",
+                    "type": "varchar(10)"
+                },
+                {
+                    "name": "comment_1",
                     "type": "str",
                     "nullable": true,
                     "rule": "word",
@@ -110,63 +114,7 @@
                 },
                 {
                     "name": "income",
-                    "type": "decimal(10,3)",
-                    "nullable": true,
-                    "rule": {
-                        "type": "range",
-                        "min": 1000,
-                        "max": 1000000
-                    },
-                    "conditional_rules": [
-                        {
-                            "when": [
-                                {
-                                    "column": "age",
-                                    "value": 25,
-                                    "operator": "less_than"
-                                }
-                            ],
-                            "then": {
-                                "rule": {
-                                    "type": "range",
-                                    "max": 30000
-                                }
-                            }
-                        },
-                        {
-                            "when": [
-                                {
-                                    "column": "age",
-                                    "min": 25,
-                                    "max": 50,
-                                    "operator": "range"
-                                }
-                            ],
-                            "then": {
-                                "rule": {
-                                    "type": "range",
-                                    "min": 30000,
-                                    "max": 100000
-                                }
-                            }
-                        },
-                        {
-                            "when": [
-                                {
-                                    "column": "age",
-                                    "value": 50,
-                                    "operator": "greater_than"
-                                }
-                            ],
-                            "then": {
-                                "rule": {
-                                    "type": "range",
-                                    "min": 100000
-                                }
-                            }
-                        }
-                    ],
-                    "sensitivity": "FINANCIAL"
+                    "type": "decimal(10,2)"
                 },
                 {
                     "name": "gender",
@@ -201,7 +149,7 @@
             ]
         }
     ],
-    "locale": "en_GB",
+    "locale": "en_US",
     "rows": 20000,
     "output": {
         "format": "dsv",
