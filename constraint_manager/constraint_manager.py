@@ -981,7 +981,6 @@ class ConstraintManager:
 
     def _pad_intelligently(self, value: str, target_length: int, data_type: str) -> str:
         """Intelligent padding based on data type"""
-        print(data_type, value)
         if data_type in ['int', 'integer'] and value.isdigit():
             return value.zfill(target_length)
         elif data_type in ['float', 'floating']:
