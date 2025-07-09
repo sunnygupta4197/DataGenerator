@@ -50,42 +50,161 @@ class SchemaValidator:
         }
 
         self._sql_datatype_mapping = {
-            'varchar': str,
-            'nvarchar': str,
-            'nchar': str,
-            'char': str,
-            'text': str,
-            'ntext': str,
-            'string': str,
-            'clob': str,
-            'int': int,
-            'integer': int,
-            'bigint': int,
-            'smallint': int,
-            'tinyint': int,
-            'mediumint': int,
-            'float': float,
-            'decimal': float,
-            'double': float,
-            'real': float,
-            'numeric': float,
-            'boolean': bool,
-            'bool': bool,
-            'bit': bool
-        }
+    'varchar': 'str',
+    'nvarchar': 'str',
+    'nchar': 'str',
+    'char': 'str',
+    'text': 'str',
+    'ntext': 'str',
+    'string': 'str',
+    'clob': 'str',
+    'longtext': 'str',
+    'mediumtext': 'str',
+    'tinytext': 'str',
+    'int': 'int',
+    'integer': 'int',
+    'bigint': 'int',
+    'smallint': 'int',
+    'tinyint': 'int',
+    'mediumint': 'int',
+    'serial': 'int',
+    'bigserial': 'int',
+    'float': 'float',
+    'decimal': 'float',
+    'double': 'float',
+    'real': 'float',
+    'numeric': 'float',
+    'money': 'float',
+    'boolean': 'bool',
+    'bool': 'bool',
+    'bit': 'bool',
+    'date': 'str',
+    'datetime': 'str',
+    'timestamp': 'str',
+    'time': 'str',
+    'year': 'int',
+    'uuid': 'str',
+    'json': 'str',
+    'jsonb': 'str',
+    'xml': 'str',
+    'binary': 'str',
+    'varbinary': 'str',
+    'blob': 'str',
+    'longblob': 'str',
+    'mediumblob': 'str',
+    'tinyblob': 'str'
+}
 
     def parse_sql_type(self, sql_type: str) ->Tuple[str, Optional[int], Optional[int]]:
         sql_type = sql_type.strip().lower()
-        pattern = r'([a-z]+)(?:\((\d+)(?:,(\d+))?\))?'
+        if sql_type in ['text', 'longtext', 'mediumtext', 'tinytext']:
+            return sql_type, None, None
+        pattern = r'([a-z]+)(?:\s*\(\s*(\d+)(?:\s*,\s*(\d+))?\s*\))?'
         match = re.match(pattern, sql_type)
         if not match:
-            raise ValueError(f'Invalid SQL type format: {sql_type}')
+            return sql_type, None, None
 
         base_type = match.group(1)
         length = int(match.group(2)) if match.group(2) else None
         precision = int(match.group(3)) if match.group(3) else None
 
         return base_type, length, precision
+
+    def convert_sql_to_python_type(self, sql_type: str) -> str:
+    """Convert SQL data type to Python data type"""
+    try:
+        base_type, length, precision = self.parse_sql_type(sql_type)
+        python_type = self._sql_datatype_mapping.get(base_type.lower())
+        
+        if python_type is None:
+            # If not found in mapping, try to infer from common patterns
+            if 'int' in base_type.lower():
+                python_type = 'int'
+            elif any(keyword in base_type.lower() for keyword in ['char', 'text', 'string']):
+                python_type = 'str'
+            elif any(keyword in base_type.lower() for keyword in ['float', 'double', 'decimal', 'numeric']):
+                python_type = 'float'
+            elif 'bool' in base_type.lower() or 'bit' in base_type.lower():
+                python_type = 'bool'
+            elif any(keyword in base_type.lower() for keyword in ['date', 'time', 'timestamp']):
+                python_type = 'str'
+            else:
+                python_type = 'str'  # Default fallback
+        
+        return python_type
+    except ValueError:
+        # If parsing fails, return the original type
+        return sql_type
+
+    def _validate_and_convert_column_type(self, column: Dict[str, Any], table_name: str, col_name: str, 
+                                      table_index: int, col_index: int):
+    """Validate and convert SQL types to Python types"""
+    original_type = column.get('type')
+    if not original_type:
+        return
+    
+    original_type_str = str(original_type).strip()
+    
+    # Check if it's a SQL type that needs conversion
+    try:
+        base_type, length, precision = self.parse_sql_type(original_type_str)
+        
+        # If we can parse it as SQL type, convert to Python type
+        if base_type.lower() in self._sql_datatype_mapping:
+            python_type = self.convert_sql_to_python_type(original_type_str)
+            
+            if python_type != original_type_str:
+                # Apply correction
+                self._apply_correction(table_index, col_index, 'type', original_type_str, python_type, 
+                                     f'converted_sql_type_{base_type}_to_python')
+                
+                # Store original SQL type info for reference
+                if 'sql_type_info' not in column:
+                    column['sql_type_info'] = {
+                        'original_type': original_type_str,
+                        'base_type': base_type,
+                        'length': length,
+                        'precision': precision
+                    }
+                
+                self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"SQL type '{original_type_str}' converted to Python type '{python_type}'")
+                
+                # Handle length constraints from SQL type
+                if length is not None and not column.get('length'):
+                    self._apply_correction(table_index, col_index, 'length', None, length, 
+                                         'extracted_from_sql_type')
+                    self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                          f"Length constraint {length} extracted from SQL type")
+                
+    except ValueError:
+        # Not a valid SQL type, check if it's a valid Python type
+        valid_python_types = {'str', 'int', 'float', 'bool', 'string', 'integer', 'boolean', 'number'}
+        if original_type_str.lower() not in valid_python_types:
+            # Try to map common variations
+            type_variations = {
+                'string': 'str',
+                'integer': 'int',
+                'boolean': 'bool',
+                'number': 'float',
+                'numeric': 'float',
+                'decimal': 'float',
+                'double': 'float',
+                'real': 'float'
+            }
+            
+            converted_type = type_variations.get(original_type_str.lower())
+            if converted_type:
+                self._apply_correction(table_index, col_index, 'type', original_type_str, converted_type, 
+                                     'normalized_python_type')
+                self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
+                                   f"Type '{original_type_str}' normalized to '{converted_type}'")
+            else:
+                self.errors.append(f"Table '{table_name}', Column '{col_name}': "
+                                 f"Unknown type '{original_type_str}'. Using 'str' as fallback.")
+                self._apply_correction(table_index, col_index, 'type', original_type_str, 'str', 
+                                     'unknown_type_fallback')
+
 
     def validate_schema(self, schema: Dict[str, Any]) -> Tuple[
         List[str], List[str], List[str], List[str], Dict[str, Any]]:
@@ -462,6 +581,8 @@ class SchemaValidator:
                          table_index: int, col_index: int):
         """Main column validation - optimized with early extractions"""
         col_name = column['name']
+        self._validate_and_convert_column_type(column, table_name, col_name, table_index, col_index)
+    
         col_type = column['type']
         constraints = self._get_constraints(column)
         rule = column.get('rule')
@@ -1639,6 +1760,31 @@ class SchemaValidator:
             'date_time_columns': date_columns,
             'avg_columns_per_table': total_columns / len(tables) if tables else 0
         }
+
+    def get_type_conversion_summary(self) -> List[Dict[str, Any]]:
+    """Get summary of type conversions performed"""
+    if not self.corrected_schema:
+        return []
+    
+    conversions = []
+    for table in self.corrected_schema.get('tables', []):
+        table_name = table.get('table_name', 'Unknown')
+        for col in table.get('columns', []):
+            col_name = col.get('name', 'Unknown')
+            sql_type_info = col.get('sql_type_info')
+            
+            if sql_type_info:
+                conversions.append({
+                    'table': table_name,
+                    'column': col_name,
+                    'original_sql_type': sql_type_info['original_type'],
+                    'base_type': sql_type_info['base_type'],
+                    'converted_python_type': col.get('type'),
+                    'length_from_sql': sql_type_info.get('length'),
+                    'precision_from_sql': sql_type_info.get('precision')
+                })
+    
+    return conversions
 
     def validate_email_format(self, email: str) -> bool:
         """Validate email format using pre-compiled regex - optimized"""
