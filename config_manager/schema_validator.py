@@ -83,6 +83,23 @@ class SchemaValidator:
         """Convert SQL data type to Python data type"""
         try:
             base_type, length, precision = self.parse_sql_type(sql_type)
+            if base_type.lower() in ['decimal', 'numeric']:
+                if precision is not None and precision > 0:
+                    return 'float'
+                else:
+                    if length is not None and length > 9:
+                        return 'bigint'
+                    else:
+                        return 'int'
+
+            if base_type.lower() in ['float', 'double', 'real']:
+                return 'float'
+            if base_type.lower() in ['int', 'integer']:
+                if length is not None and length > 9:
+                    return 'bigint'
+                else:
+                    return 'int'
+
             python_type = self._sql_datatype_mapping.get(base_type.lower())
 
             if python_type is None:
@@ -99,7 +116,6 @@ class SchemaValidator:
                     python_type = 'str'
                 else:
                     python_type = 'str'  # Default fallback
-
             return python_type
         except ValueError:
             # If parsing fails, return the original type
@@ -136,8 +152,15 @@ class SchemaValidator:
                             'precision': precision
                         }
 
-                    self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
-                                       f"SQL type '{original_type_str}' converted to Python type '{python_type}'")
+
+                    if base_type.lower() in ['decimal', 'numeric']:
+                        if precision is not None and precision > 0:
+                            warning_msg = f"SQL type '{original_type_str}' with precision {precision} converted to Python type '{python_type}'"
+                        else:
+                            warning_msg = f"SQL type '{original_type_str}' without precision converted to Python type '{python_type}'"
+                    else:
+                        warning_msg = f"SQL type '{original_type_str}' converted to Python type '{python_type}'"
+                    self.warnings.append(f"Table '{table_name}', Column '{col_name}': {warning_msg}")
 
                     # Handle length constraints from SQL type
                     if length is not None and not column.get('length'):
@@ -551,26 +574,28 @@ class SchemaValidator:
         """Main column validation - optimized with early extractions"""
         col_name = column['name']
         self._validate_and_convert_column_type(column, table_name, col_name, table_index, col_index)
+
+        updated_column = self.corrected_schema['tables'][table_index]['columns'][col_index]
     
-        col_type = column['type']
-        constraints = self._get_constraints(column)
-        rule = column.get('rule')
-        length_constraint = column.get('length')
+        col_type = updated_column.get('type', '')
+        constraints = self._get_constraints(updated_column)
+        rule = updated_column.get('rule')
+        length_constraint = updated_column.get('length')
 
         # Validate and convert length constraint if needed
-        self._validate_and_convert_length_constraint(column, table_name, col_name, table_index, col_index,
+        self._validate_and_convert_length_constraint(updated_column, table_name, col_name, table_index, col_index,
                                                      length_constraint)
 
         # Constraint-based validation
-        constraint_info = self._analyze_constraints(constraints, column)
-        self._handle_nullable_logic(column, table_name, col_name, table_index, col_index, constraint_info)
+        constraint_info = self._analyze_constraints(constraints, updated_column)
+        self._handle_nullable_logic(updated_column, table_name, col_name, table_index, col_index, constraint_info)
 
         # Rule-based validation
         if rule and isinstance(rule, dict):
-            self._validate_rule(column, table_name, col_name, table_index, col_index, rule, length_constraint)
+            self._validate_rule(updated_column, table_name, col_name, table_index, col_index, rule, length_constraint)
 
         # Type-rule consistency
-        self._validate_type_rule_consistency(column, table_name, col_name, table_index, col_index)
+        self._validate_type_rule_consistency(updated_column, table_name, col_name, table_index, col_index)
 
     def _validate_and_convert_length_constraint(self, column: Dict[str, Any], table_name: str, col_name: str,
                                                 table_index: int, col_index: int, length_constraint):
@@ -1378,8 +1403,8 @@ class SchemaValidator:
         col_type = column.get('type', '').lower()
         rule = column.get('rule')
 
-        base_type, length, precision = self.parse_sql_type(col_type)
-        print(base_type, length, precision)
+        # base_type, length, precision = self.parse_sql_type(col_type)
+        # print(col_type, base_type, length, precision)
 
         if not rule or not isinstance(rule, dict):
             return
@@ -1395,6 +1420,22 @@ class SchemaValidator:
         auto_convert = compatibility.get('auto_convert', False)
 
         if col_type not in compatible_types:
+            try:
+                base_type, length, precision = self.parse_sql_type(col_type)
+                if base_type.lower() in ['decimal', 'numeric']:
+                    if precision is not None and precision > 0:
+                        converted_type = 'float'
+                    else:
+                        converted_type = 'int'
+
+                    if converted_type in compatible_types:
+                        self._apply_correction(table_index, col_index, 'type', converted_type, f'type_rule_compatibility_{rule_type}')
+                        self.warnings.append(f"Table '{table_name}', Column '{col_name}': "
+                                             f"Type '{col_type}' is converted to '{converted_type}' for {rule_type} rule compatibility")
+                        return
+            except:
+                pass
+
             if col_type in {'str', 'string', 'text'} and auto_convert:
                 self._handle_string_type_conversion(column, table_name, col_name, table_index, col_index,
                                                     rule, rule_type)
