@@ -164,16 +164,8 @@ class SchemaValidator:
 
                     # Handle length constraints from SQL type
                     if length is not None and not column.get('length'):
-                        max_value = length if python_type not in ['int', 'float', 'integer'] else 10**(length - 1)
-                        new_rule = {"min": 0, "max": max_value}
-                        existing_rule = column.get('rule', {})
-                        rule = existing_rule.setdefault(new_rule)
-                        self._apply_correction(table_index, col_index, 'length', None, None,
-                                             'extracted_from_sql_type')
-                        self._apply_correction(table_index, col_index, 'rule', None, rule,
-                                             'extracted_from_sql_type')
-                        self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
-                                              f"Length constraint {length} extracted from SQL type")
+                        self._handle_sql_length_constraint(column, table_name, col_name, table_index, col_index,
+                                                           base_type, length, python_type)
                         
                     if base_type.lower() in ['decimal', 'numeric'] and precision is not None and precision > 0:
                         self._apply_correction(table_index, col_index, 'precision', None, precision, 'extracted_from_sql_type')
@@ -208,6 +200,40 @@ class SchemaValidator:
                     self._apply_correction(table_index, col_index, 'type', original_type_str, 'str',
                                      'unknown_type_fallback')
 
+    def _handle_sql_length_constraint(self, column: Dict[str, Any], table_name: str, col_name: str,
+                                      table_index: int, col_index: int, base_type: str, length: int, python_type: str):
+        """Handle length constraints based on SQL type characteristics"""
+        base_type_lower = base_type.lower()
+
+        print(python_type, base_type_lower)
+
+        # Variable-length string types (use max length)
+        if base_type_lower in {'varchar', 'nvarchar', 'text', 'ntext', 'longtext', 'mediumtext', 'tinytext', 'clob'}:
+            length_constraint = {'max': length}
+            self._apply_correction(table_index, col_index, 'length', None, length_constraint,
+                                   'extracted_max_length_from_sql')
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Max length {length} extracted from SQL type {base_type}")
+
+        # Fixed-length string types (use exact length)
+        elif base_type_lower in {'char', 'nchar', 'binary'}:
+            self._apply_correction(table_index, col_index, 'length', None, length, 'extracted_fixed_length_from_sql')
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Fixed length {length} extracted from SQL type {base_type}")
+
+        # Numeric types with length (don't convert to rules here - let other validation handle it)
+        elif python_type in {'int', 'float', 'bigint'} and base_type_lower in {'int', 'integer', 'bigint', 'smallint',
+                                                                               'tinyint'}:
+            # For numeric types, store length but don't convert to rules yet
+            self._apply_correction(table_index, col_index, 'length', None, length, 'extracted_numeric_length_from_sql')
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Numeric length constraint {length} extracted from SQL type {base_type}")
+
+        # For other types, just store the length
+        else:
+            self._apply_correction(table_index, col_index, 'length', None, length, 'extracted_from_sql_type')
+            self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
+                                    f"Length constraint {length} extracted from SQL type {base_type}")
 
     def validate_schema(self, schema: Dict[str, Any]) -> Tuple[
         List[str], List[str], List[str], List[str], Dict[str, Any]]:
@@ -769,6 +795,14 @@ class SchemaValidator:
         """Determine if column should have length converted to digit range based on type and rule"""
         col_type = column.get('type', '').lower()
         rule = column.get('rule', {})
+
+        sql_type_info = column.get('sql_type_info')
+        if sql_type_info:
+            original_sql_type = sql_type_info.get('base_type', '').lower()
+            # Don't convert string SQL types to digit ranges
+            if original_sql_type in {'varchar', 'nvarchar', 'char', 'nchar', 'text', 'ntext',
+                                     'longtext', 'mediumtext', 'tinytext', 'clob', 'binary', 'varbinary'}:
+                return False
 
         # Don't convert for string types that represent fixed-format data
         string_types_with_fixed_formats = {

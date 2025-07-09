@@ -114,7 +114,7 @@
                 },
                 {
                     "name": "income",
-                    "type": "decimal(10,2)"
+                    "type": "decimal(10,4)"
                 },
                 {
                     "name": "gender",
