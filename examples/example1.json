@@ -39,11 +39,7 @@
                 {
                     "name": "customer_id",
                     "type": "int",
-					"constraint": ["PK"],
-                    "rule": {
-                        "type": "range",
-                        "min": 0
-                    }
+					"constraint": ["PK"]
                 },
                 {
                     "name": "first_name",
@@ -321,11 +317,10 @@
     "locale": "en_US",
     "rows": 20000,
     "output": {
-        "format": "dsv",
+        "format": "csv",
         "enable_fixed_width": true,
         "directory": "./output/{timestamp}",
         "filename_template": "{table_name}",
-        "delimiter": "|",
         "alignment": "left",
         "numeric_alignment": "left",
         "default_column_width": 30

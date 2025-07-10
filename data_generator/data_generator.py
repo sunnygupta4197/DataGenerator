@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Dict, List, Any, Optional, Callable, Generator
 import pandas as pd
+import threading
 
 from .value_generator import ValueGenerator
 from constraint_manager.constraint_manager import ConstraintManager
@@ -127,8 +128,16 @@ class BatchGenerator:
         self.constraint_manager = constraint_manager
         self.logger = logger
 
+        self._record_count_lock = threading.RLock()
+
         # Track global record counts per table to avoid PK collisions
         self.table_record_counts = {}
+
+    def _reserve_index_range(self, table_name: str, batch_size: int) -> int:
+        with self._record_count_lock:
+            current_count = self.table_record_counts.get(table_name, 0)
+            self.table_record_counts[table_name] = current_count + batch_size
+            return current_count
 
     def generate_batch(self, table_metadata: Dict, batch_size: int,
                        generated_data: Dict[str, pd.DataFrame],
@@ -142,7 +151,7 @@ class BatchGenerator:
         foreign_keys = table_metadata.get("foreign_keys", [])
 
         # Get current global record count for this table
-        current_count = self.table_record_counts.get(table_name, 0)
+        start_index = self._reserve_index_range(table_name, batch_size)
 
         # Prepare FK pools
         fk_pools, fk_distributions = self._prepare_fk_pools(
@@ -153,15 +162,12 @@ class BatchGenerator:
         batch_data = []
         for record_idx in range(batch_size):
             # Use global record index instead of batch-local index
-            global_record_idx = current_count + record_idx
+            global_record_idx = start_index + record_idx
 
             row = self._generate_single_record(
                 global_record_idx, table_metadata, fk_pools, fk_distributions
             )
             batch_data.append(row)
-
-        # Update global record count for this table
-        self.table_record_counts[table_name] = current_count + batch_size
 
         # Apply batch-level constraints
         return self.constraint_manager.apply_length_constraints_to_batch(batch_data, table_metadata)
