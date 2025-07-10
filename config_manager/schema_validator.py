@@ -304,7 +304,7 @@ class SchemaValidator:
             self.suggestions.append(f"Table '{table_name}', Column '{col_name}': "
                                     f"Decimal {base_type}({length}) -> integer-like range for float type")
 
-    def validate_schema(self, schema: Dict[str, Any]) -> Tuple[
+    def _validate_schema(self, schema: Dict[str, Any]) -> Tuple[
         List[str], List[str], List[str], List[str], Dict[str, Any]]:
         """Main validation method - now returns critical_errors as well"""
         self._reset_state()
@@ -320,6 +320,69 @@ class SchemaValidator:
         self._validate_all_tables(schema)
 
         return self.errors, self.warnings, self.suggestions, self.critical_errors, self.corrected_schema
+
+    def validate_schema(self, schema_dict):
+        try:
+            errors, warnings, suggestions, critical_errors, corrected_schema = self._validate_schema(schema_dict)
+            return self._handle_validation_results(errors, warnings, suggestions, critical_errors, corrected_schema)
+        except Exception as validation_error:
+            print(f"🚨 CRITICAL: Schema validation error: {validation_error}")
+            exit(1)
+
+    def _handle_validation_results(self, errors, warnings, suggestions, critical_errors, corrected_schema):
+        """Handle validation results and determine whether to continue or exit"""
+        print("=== VALIDATION RESULTS ===")
+
+        print(f"\nCritical Errors found: {len(critical_errors)}")
+        for error in critical_errors:
+            print(f"🔴 CRITICAL: {error}")
+
+        print(f"\nNon-Critical Errors found: {len(errors)}")
+        for error in errors:
+            print(f"❌ {error}")
+
+        print(f"\nWarnings found: {len(warnings)}")
+        for warning in warnings:
+            print(f"⚠️  {warning}")
+
+        print(f"\nSuggestions found: {len(suggestions)}")
+        for suggestion in suggestions:
+            print(f"💡 {suggestion}")
+
+        # Exit if critical errors found
+        if critical_errors:
+            print(f"\n🚨 SCRIPT TERMINATED: {len(critical_errors)} critical error(s) must be fixed before proceeding.")
+            print("Critical errors indicate fundamental issues that would cause data corruption or system failure.")
+            exit(1)
+
+        # Continue if only non-critical errors, warnings, or suggestions
+        if errors:
+            print(
+                f"\n⚠️  Continuing with {len(errors)} non-critical error(s). These may cause data quality issues but won't break the system.")
+
+        # Show applied corrections
+        self._show_applied_corrections(corrected_schema)
+
+        return corrected_schema
+
+    def _show_applied_corrections(self, corrected_schema):
+        """Display any corrections that were applied to the schema"""
+        corrections_found = False
+
+        for table in corrected_schema.get('tables', []):
+            for col in table.get('columns', []):
+                if 'corrections' in col:
+                    if not corrections_found:
+                        print(f"\n🔧 Auto-corrections applied:")
+                        corrections_found = True
+                    print(f"   - {table['table_name']}.{col['name']}: {len(col['corrections'])} correction(s)")
+                    for correction in col['corrections']:
+                        action = correction.get('action', 'modified')
+                        print(
+                            f"     • {correction['field']}: {correction['old_value']} → {correction['new_value']} ({correction['reason']}) [{action}]")
+
+        if not corrections_found:
+            print(f"\n✅ No auto-corrections needed")
 
     def _validate_schema_structure(self, schema: Dict[str, Any]) -> bool:
         """Early validation of basic schema structure"""

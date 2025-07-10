@@ -1,27 +1,23 @@
 import os
 import json
 import logging
-from typing import Dict, Any, List, Optional, Union, Tuple
+from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 import tempfile
-import shutil
 from contextlib import contextmanager
-from .json_reader import JSONConfigReader
+
+from config_manager.readers import ConfigReader
+from .readers import ConfigReader
 from .schema_validator import SchemaValidator
 from .ai_providers import AIProvider, AIConfig, OpenAIConfig, MistralConfig
 # Add to imports section
 from .feature_manager import (
     FeatureManager,
     ConfigurationIntegration,
-    FeatureStatus,
-    FeatureResult,
-    CoreFeature,
-    Dependency,
-    DependencyType,
-    OutputFeature
+    FeatureStatus
 )
 
 
@@ -849,7 +845,7 @@ class ConfigurationManager:
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
         # Load raw configuration
-        raw_config, config_reader = self._load_json(config_path)
+        raw_config = self._load_config(config_path)
 
         # Apply argument overrides BEFORE parsing
         raw_config = self._apply_argument_overrides(
@@ -857,7 +853,7 @@ class ConfigurationManager:
             **kwargs
         )
 
-        raw_config = config_reader.validate_schema(raw_config, self.schema_validator)
+        raw_config = self.schema_validator.validate_schema(raw_config)
 
         if kwargs.get('save_config', False):
             path = os.path.dirname(raw_config['output']['directory'])
@@ -1322,12 +1318,12 @@ class ConfigurationManager:
         for error in errors:
             self.logger.error(f"  - {error}")
 
-    def _load_json(self, config_path: Path, rows: int = None) -> tuple[Any, JSONConfigReader]:
+    def _load_config(self, config_path: Path, rows: int = None) -> dict | None:
         """Load JSON configuration file"""
         try:
-            config_reader = JSONConfigReader(config_path)
-            config = config_reader.load_config()
-            return config, config_reader
+            config_reader = ConfigReader(config_path)
+            config = config_reader.read_config()
+            return config
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON configuration: {e}")
 
