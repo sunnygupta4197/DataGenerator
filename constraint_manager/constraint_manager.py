@@ -140,6 +140,7 @@ class ConstraintManager:
 
         # Relationship constraint tracking
         self._one_to_one_used = defaultdict(set)
+        self._one_to_one_column_pools = {}
         self._one_to_many_distribution = defaultdict(dict)
 
         # Performance settings
@@ -620,12 +621,6 @@ class ConstraintManager:
         fk_key = f"{table_name}.{column_name}"
 
         with self._fk_pools_lock:
-            # Limit pool size to prevent memory issues
-            max_pool_size = min(len(values), 50000)
-            if len(values) > max_pool_size:
-                # Sample randomly to maintain distribution
-                values = random.sample(values, max_pool_size)
-
             self._fk_pools[fk_key] = values
 
         self.logger.debug(f"Updated FK pool {fk_key} with {len(values)} values")
@@ -767,11 +762,12 @@ class ConstraintManager:
 
     # ===================== OPTIMIZED RELATIONSHIP CONSTRAINTS =====================
 
-    def handle_one_to_one_relationship(self, fk_config: Dict, available_values: List[Any]) -> Optional[Any]:
+    def handle_one_to_one_relationship(self, fk_config: Dict, table_name: str, available_values: List[Any]) -> Optional[Any]:
         """Handle one-to-one relationship constraints with optimization"""
         parent_table = fk_config["parent_table"]
         parent_column = fk_config["parent_column"]
-        constraint_key = f"{parent_table}.{parent_column}"
+        child_column = fk_config["child_column"]
+        constraint_key = f"{parent_table}.{parent_column}:{table_name}.{child_column}"
         with self._lock:
             used_values = self._one_to_one_used[constraint_key]
 
@@ -780,6 +776,9 @@ class ConstraintManager:
             unused_set = available_set - used_values
 
             if not unused_set:
+                self.logger.warning(f"FK pool exhausted for {constraint_key}")
+                self.logger.warning(f"Available values: {len(available_values)}")
+                self.logger.warning(f"Unused values for {constraint_key}: {len(available_values)}")
                 self.logger.warning(f"No unused values available for one-to-one relationship {constraint_key}")
                 return None
 
@@ -1123,6 +1122,18 @@ class ConstraintManager:
 
         gc.collect()
         self.logger.info("All constraint tracking caches reset")
+
+    def reset_one_to_one_used_variables(self, current_table: str = None):
+        """Reset used variables tracking with proper cleanup"""
+        with self._lock:
+            if current_table:
+                self.logger.info(f"Completed table '{current_table}' - restting one-to-one constraints for the next table")
+
+            total_freed = sum(len(used_set) for used_set in self._one_to_one_used.values())
+            self._one_to_one_used.clear()
+
+            if total_freed > 0:
+                self.logger.info(f"Reset one-to-one constraints - freed {total_freed} used values for next table")
 
     # ===================== STATISTICS AND MONITORING =====================
 

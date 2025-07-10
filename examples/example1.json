@@ -143,11 +143,180 @@
                     "parent_table": "address",
                     "parent_column": "address_id",
                     "child_column": "address_id",
-                    "relationship_type": "one_to_many",
+                    "relationship_type": "one_to_one",
                     "nullable": false
                 }
             ]
+        },
+        {
+      "table_name": "order_header",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "str",
+          "constraint": ["PK"],
+          "nullable": false,
+          "rule": {
+            "prefix": "ORD-",
+            "type": "range",
+            "min": 1000000,
+            "max": 9999999
+          },
+          "length": 11
+        },
+        {
+          "name": "customer_id",
+          "type": "int",
+          "nullable": false
+        },
+        {
+          "name": "order_date",
+          "type": "date",
+          "nullable": false,
+          "rule": {
+            "type": "date_range",
+            "start": "2023-01-01",
+            "end": "2024-12-31"
+          }
+        },
+        {
+          "name": "order_time",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "09:00:00", "10:30:00", "12:15:00", "14:45:00", "16:20:00",
+              "18:30:00", "20:10:00", "22:00:00"
+            ]
+          }
+        },
+        {
+          "name": "status",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"],
+            "probabilities": {
+              "PENDING": 0.05,
+              "CONFIRMED": 0.1,
+              "PROCESSING": 0.15,
+              "SHIPPED": 0.2,
+              "DELIVERED": 0.45,
+              "CANCELLED": 0.03,
+              "RETURNED": 0.02
+            }
+          },
+          "default": "PENDING"
+        },
+        {
+          "name": "subtotal",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 10.00,
+            "max": 10000.00
+          }
+        },
+        {
+          "name": "tax_amount",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 0.50,
+            "max": 800.00
+          }
+        },
+        {
+          "name": "shipping_cost",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 0.00,
+            "max": 50.00
+          }
+        },
+        {
+          "name": "total_amount",
+          "type": "float",
+          "nullable": false,
+          "rule": {
+            "type": "range",
+            "min": 10.50,
+            "max": 10850.00
+          }
+        },
+        {
+          "name": "payment_method",
+          "type": "str",
+          "nullable": false,
+          "rule": {
+            "type": "choice",
+            "value": ["CREDIT_CARD", "DEBIT_CARD", "PAYPAL", "APPLE_PAY", "GOOGLE_PAY", "BANK_TRANSFER", "CASH_ON_DELIVERY"],
+            "probabilities": {
+              "CREDIT_CARD": 0.4,
+              "DEBIT_CARD": 0.25,
+              "PAYPAL": 0.15,
+              "APPLE_PAY": 0.08,
+              "GOOGLE_PAY": 0.07,
+              "BANK_TRANSFER": 0.03,
+              "CASH_ON_DELIVERY": 0.02
+            }
+          }
+        },
+        {
+          "name": "shipping_address_id",
+          "type": "str",
+          "nullable": true
+        },
+        {
+          "name": "billing_address_id",
+          "type": "str",
+          "nullable": true
+        },
+        {
+          "name": "notes",
+          "type": "str",
+          "nullable": true,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "Rush delivery requested", "Gift wrapping required", "Fragile items",
+              "Leave at front door", "Contact before delivery", "Business delivery",
+              "Weekend delivery preferred", "Special handling required"
+            ]
+          },
+          "length": {"min": 10, "max": 150}
         }
+      ],
+      "foreign_keys": [
+        {
+          "parent_table": "customer",
+          "parent_column": "customer_id",
+          "child_column": "customer_id",
+          "relationship_type": "many_to_one",
+          "nullable": false
+        },
+        {
+          "parent_table": "address",
+          "parent_column": "address_id",
+          "child_column": "shipping_address_id",
+          "relationship_type": "one_to_one",
+          "nullable": true
+        },
+        {
+          "parent_table": "address",
+          "parent_column": "address_id",
+          "child_column": "billing_address_id",
+          "relationship_type": "one_to_one",
+          "nullable": true
+        }
+      ]
+    }
     ],
     "locale": "en_US",
     "rows": 20000,

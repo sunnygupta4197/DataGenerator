@@ -192,12 +192,12 @@ class BatchGenerator:
             if relationship_type == "one_to_one":
                 available_values = self.fk_manager.get_fk_values(
                     fk["parent_table"], fk["parent_column"], generated_data,
-                    expected_type, sample_size=10000
+                    expected_type, sample_size=None
                 )
                 # Use the constraint manager's one-to-one handler
                 distributed_values = []
                 for i in range(batch_size):
-                    value = self.constraint_manager.handle_one_to_one_relationship(fk, available_values)
+                    value = self.constraint_manager.handle_one_to_one_relationship(fk, table_metadata['table_name'], available_values)
                     if value is not None:
                         distributed_values.append(value)
                     else:
@@ -208,7 +208,7 @@ class BatchGenerator:
                 # Handle one-to-many: controlled distribution
                 available_values = self.fk_manager.get_fk_values(
                     fk["parent_table"], fk["parent_column"], generated_data,
-                    expected_type, sample_size=10000
+                    expected_type, sample_size=None
                 )
                 distributed_values = self.constraint_manager.handle_one_to_many_relationship(
                     fk, available_values, batch_size
@@ -219,7 +219,7 @@ class BatchGenerator:
                 # Regular FK pool for many-to-one
                 available_values = self.fk_manager.get_fk_values(
                     fk["parent_table"], fk["parent_column"], generated_data,
-                    expected_type, sample_size=10000
+                    expected_type, sample_size=None
                 )
                 fk_pools[child_column] = available_values or self._generate_fallback_fk_values(
                     expected_type, batch_size
