@@ -1,0 +1,123 @@
+{
+    "locale": "en_US",
+    "output_format": "csv",
+    "row_count": 100,
+    "tables": [
+        {
+            "table_name": "customer",
+            "columns": [
+                {
+                    "name": "cust_name",
+                    "type": "varchar(20)",
+                    "nullable": false,
+                    "primary_key": null,
+                    "length": NaN,
+                    "min_value": NaN,
+                    "max_value": NaN,
+                    "choice_values": null,
+                    "start_date": NaN,
+                    "end_date": NaN,
+                    "date_format": NaN,
+                    "datetimestamp_format": NaN,
+                    "value_prefix": NaN,
+                    "value_suffix": NaN,
+                    "rule": {
+                        "rule": "first_name"
+                    }
+                },
+                {
+                    "name": "cust_id",
+                    "type": "int",
+                    "nullable": false,
+                    "primary_key": "Yes",
+                    "length": 10.0,
+                    "min_value": NaN,
+                    "max_value": NaN,
+                    "choice_values": null,
+                    "start_date": NaN,
+                    "end_date": NaN,
+                    "date_format": NaN,
+                    "datetimestamp_format": NaN,
+                    "value_prefix": NaN,
+                    "value_suffix": NaN,
+                    "rule": {
+                        "rule": null
+                    }
+                }
+            ],
+            "foreign_keys": []
+        },
+        {
+            "table_name": "order",
+            "columns": [
+                {
+                    "name": "order_id",
+                    "type": "int",
+                    "nullable": false,
+                    "primary_key": "Yes",
+                    "length": NaN,
+                    "min_value": 11111.0,
+                    "max_value": 9999999.0,
+                    "choice_values": null,
+                    "start_date": NaN,
+                    "end_date": NaN,
+                    "date_format": NaN,
+                    "datetimestamp_format": NaN,
+                    "value_prefix": NaN,
+                    "value_suffix": NaN,
+                    "rule": {
+                        "rule": null
+                    }
+                },
+                {
+                    "name": "orde_cust_id",
+                    "type": "int",
+                    "nullable": false,
+                    "primary_key": null,
+                    "length": NaN,
+                    "min_value": NaN,
+                    "max_value": NaN,
+                    "choice_values": null,
+                    "start_date": NaN,
+                    "end_date": NaN,
+                    "date_format": NaN,
+                    "datetimestamp_format": NaN,
+                    "value_prefix": NaN,
+                    "value_suffix": NaN,
+                    "rule": {
+                        "rule": null
+                    }
+                },
+                {
+                    "name": "orde_category",
+                    "type": "varchar(20)",
+                    "nullable": true,
+                    "primary_key": null,
+                    "length": NaN,
+                    "min_value": NaN,
+                    "max_value": NaN,
+                    "choice_values": "personal, business",
+                    "start_date": NaN,
+                    "end_date": NaN,
+                    "date_format": NaN,
+                    "datetimestamp_format": NaN,
+                    "value_prefix": NaN,
+                    "value_suffix": NaN,
+                    "rule": {
+                        "rule": null
+                    }
+                }
+            ],
+            "foreign_keys": [
+                {
+                    "column": "orde_cust_id",
+                    "references": {
+                        "table": "customer",
+                        "column": "cust_id"
+                    },
+                    "relationship_type": "one_to_one"
+                }
+            ]
+        }
+    ]
+}
