@@ -1,0 +1,6 @@
+﻿Database_Name,Table_Name,Column_Name,Column_Data_rype,Nullable,PK,FK,Parent_Table_Name,Parent_Column_Name,FK_Relationship_Type,Rule,Length,Minimum_Value,Maximum_Value,Choice_Values,Start_Date,End_Date,Date_Format,Datetimestamp_Format,Value_Prefix,Value_Suffix
+ABCD,customer,cust_name,varchar(20),FALSE,,,,,,first_name,,,,,,,,,,
+ABCD,customer,cust_id,int,FALSE,Yes,,,,,,10,,,,,,,,,
+ABCD,order,order_id,int,FALSE,Yes,,,,,,,11111,9999999,,,,,,,
+ABCD,order,orde_cust_id,int,FALSE,,Yes,customer,cust_id,one_to_one,,,,,,,,,,,
+ABCD,order,orde_category,varchar(20),TRUE,,,,,,,,,,"personal, business",,,,,,
