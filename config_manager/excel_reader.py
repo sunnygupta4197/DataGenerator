@@ -3,6 +3,15 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
+from abc import ABC, abstractmethod
+from enum import Enum
+
+
+class FileFormat(Enum):
+    """Supported file formats."""
+    CSV = "csv"
+    EXCEL_SINGLE_SHEET = "excel_single"
+    EXCEL_MULTIPLE_SHEETS = "excel_multiple"
 
 
 class Column:
@@ -17,6 +26,7 @@ class Column:
         self.length = None
         self.default = None
         self.sensitivity = None
+        self.null_percentage = None
 
     def set_nullable(self, nullable: bool):
         """Set the nullable property."""
@@ -49,6 +59,11 @@ class Column:
         self.sensitivity = sensitivity
         return self
 
+    def set_null_percentage(self, percentage: int):
+        """Set the null percentage for nullable columns."""
+        self.null_percentage = percentage
+        return self
+
     def to_dict(self) -> Dict:
         """Convert column to dictionary representation."""
         result = {
@@ -73,6 +88,9 @@ class Column:
 
         if self.sensitivity:
             result["sensitivity"] = self.sensitivity
+
+        if self.null_percentage:
+            result["null_percentage"] = self.null_percentage
 
         return result
 
@@ -142,11 +160,11 @@ class Table:
 
 
 class RuleBuilder:
-    """Builds rules for data generation based on CSV data."""
+    """Builds rules for data generation based on CSV/Excel data."""
 
     @staticmethod
     def build_rule(row: pd.Series) -> Optional[Union[str, Dict]]:
-        """Build a rule from CSV row data."""
+        """Build a rule from CSV/Excel row data."""
         # Direct rule specification
         if pd.notna(row.get("Rule")):
             return str(row["Rule"])
@@ -160,13 +178,23 @@ class RuleBuilder:
             }
             return RuleBuilder._add_prefix_suffix(rule, row)
 
-        # Choice rule
+        # Choice rule with probabilities
         if pd.notna(row.get("Choice_Values")):
             choices = [choice.strip() for choice in str(row["Choice_Values"]).split(',')]
             rule = {
                 "type": "choice",
                 "value": choices
             }
+
+            # Add probabilities if present
+            if pd.notna(row.get("Choice_Probabilities")):
+                try:
+                    probs = eval(row["Choice_Probabilities"])  # Handle dict string
+                    if isinstance(probs, dict):
+                        rule["probabilities"] = probs
+                except:
+                    pass
+
             return RuleBuilder._add_prefix_suffix(rule, row)
 
         # Date range rule
@@ -188,9 +216,17 @@ class RuleBuilder:
 
             if pd.notna(row.get("Start_Date")):
                 rule["start"] = str(row["Start_Date"])
-            if pd.notna(row.get("Date_Format")):
-                rule["format"] = str(row["Date_Format"])
+            if pd.notna(row.get("Datetimestamp_Format")):
+                rule["format"] = str(row["Datetimestamp_Format"])
 
+            return RuleBuilder._add_prefix_suffix(rule, row)
+
+        # Regex rule
+        if pd.notna(row.get("Regex_Pattern")):
+            rule = {
+                "type": "regex",
+                "regex": str(row["Regex_Pattern"])
+            }
             return RuleBuilder._add_prefix_suffix(rule, row)
 
         # Only prefix/suffix
@@ -266,48 +302,17 @@ class Schema:
         }
 
 
-class CSVToJSONConverter:
-    """Main converter class that handles CSV to JSON conversion."""
+class DataProcessor(ABC):
+    """Abstract base class for data processors."""
 
-    def __init__(self, locale: str = "en_US", rows: int = 20000):
-        self.locale = locale
-        self.rows = rows
-        self.schema = Schema(locale, rows)
-
-    def load_csv(self, csv_file_path: str) -> pd.DataFrame:
-        """Load and preprocess CSV file."""
-        if not os.path.exists(csv_file_path):
-            raise FileNotFoundError(f"CSV file not found: {csv_file_path}")
-
-        df = pd.read_csv(csv_file_path)
-        df.columns = [col_name.strip() for col_name in df.columns]
-        df = df.where(pd.notnull(df), None)
-
-        return df
-
-    def process_csv_data(self, df: pd.DataFrame):
-        """Process CSV data and build schema."""
-        # Group by table name
-        table_groups = df.groupby('Table_Name')
-
-        for table_name, group in table_groups:
-            table = Table(table_name)
-
-            # Process each column
-            for _, row in group.iterrows():
-                column = self._create_column(row)
-                table.add_column(column)
-
-                # Handle foreign keys
-                if row.get("FK") == "Yes":
-                    foreign_key = self._create_foreign_key(row)
-                    table.add_foreign_key(foreign_key)
-
-            self.schema.add_table(table)
+    @abstractmethod
+    def process_data(self, data: Any) -> Schema:
+        """Process data and return schema."""
+        pass
 
     def _create_column(self, row: pd.Series) -> Column:
-        """Create a column from CSV row data."""
-        column = Column(row["Column_Name"], row["Column_Data_rype"])
+        """Create a column from row data."""
+        column = Column(row["Column_Name"], row["Column_Data_Type"])
 
         # Set nullable
         if row.get("Nullable") == True or str(row.get("Nullable", "")).upper() == "TRUE":
@@ -326,10 +331,22 @@ class CSVToJSONConverter:
         if pd.notna(row.get("Length")):
             column.set_length(int(row["Length"]))
 
+        # Set default
+        if pd.notna(row.get("Default_Value")):
+            column.set_default(str(row["Default_Value"]))
+
+        # Set sensitivity
+        if pd.notna(row.get("Sensitivity")):
+            column.set_sensitivity(str(row["Sensitivity"]))
+
+        # Set null percentage
+        if pd.notna(row.get("Null_Percentage")):
+            column.set_null_percentage(int(row["Null_Percentage"]))
+
         return column
 
     def _create_foreign_key(self, row: pd.Series) -> ForeignKey:
-        """Create a foreign key from CSV row data."""
+        """Create a foreign key from row data."""
         nullable = row.get("Nullable") == True or str(row.get("Nullable", "")).upper() == "TRUE"
 
         return ForeignKey(
@@ -340,11 +357,147 @@ class CSVToJSONConverter:
             nullable=nullable
         )
 
-    def convert(self, csv_file_path: str, output_file_path: str = None) -> Dict:
-        """Convert CSV to JSON format."""
-        # Load and process CSV
-        df = self.load_csv(csv_file_path)
-        self.process_csv_data(df)
+
+class CSVProcessor(DataProcessor):
+    """Processes CSV data with database and table name columns."""
+
+    def __init__(self, locale: str = "en_US", rows: int = 20000):
+        self.locale = locale
+        self.rows = rows
+
+    def process_data(self, df: pd.DataFrame) -> Schema:
+        """Process CSV data and build schema."""
+        schema = Schema(self.locale, self.rows)
+
+        # Group by table name
+        table_groups = df.groupby('Table_Name')
+
+        for table_name, group in table_groups:
+            table = Table(table_name)
+
+            # Process each column
+            for _, row in group.iterrows():
+                column = self._create_column(row)
+                table.add_column(column)
+
+                # Handle foreign keys
+                if row.get("FK") == "Yes":
+                    foreign_key = self._create_foreign_key(row)
+                    table.add_foreign_key(foreign_key)
+
+            schema.add_table(table)
+
+        return schema
+
+
+class ExcelMultiSheetProcessor(DataProcessor):
+    """Processes Excel data with multiple sheets (each sheet = table)."""
+
+    def __init__(self, locale: str = "en_US", rows: int = 20000):
+        self.locale = locale
+        self.rows = rows
+
+    def process_data(self, excel_data: Dict[str, pd.DataFrame]) -> Schema:
+        """Process Excel multi-sheet data and build schema."""
+        schema = Schema(self.locale, self.rows)
+
+        for sheet_name, df in excel_data.items():
+            # Skip sheets that don't look like table definitions
+            if not self._is_table_definition_sheet(df):
+                continue
+
+            table = Table(sheet_name)
+
+            # Process each column
+            for _, row in df.iterrows():
+                column = self._create_column(row)
+                table.add_column(column)
+
+                # Handle foreign keys
+                if row.get("FK") == "Yes":
+                    foreign_key = self._create_foreign_key(row)
+                    table.add_foreign_key(foreign_key)
+
+            schema.add_table(table)
+
+        return schema
+
+    def _is_table_definition_sheet(self, df: pd.DataFrame) -> bool:
+        """Check if sheet contains table definition data."""
+        required_columns = ["Column_Name", "Column_Data_Type"]
+        return all(col in df.columns for col in required_columns)
+
+
+class FileToJSONConverter:
+    """Main converter class that handles CSV/Excel to JSON conversion."""
+
+    def __init__(self, locale: str = "en_US", rows: int = 20000):
+        self.locale = locale
+        self.rows = rows
+        self.schema = None
+
+    def detect_file_format(self, file_path: str) -> FileFormat:
+        """Detect the file format and structure."""
+        if file_path.lower().endswith('.csv'):
+            return FileFormat.CSV
+        elif file_path.lower().endswith(('.xlsx', '.xls')):
+            # Check if it's single sheet or multiple sheets
+            excel_file = pd.ExcelFile(file_path)
+            if len(excel_file.sheet_names) == 1:
+                # Check if single sheet has Table_Name column
+                df = pd.read_excel(file_path, sheet_name=excel_file.sheet_names[0])
+                if 'Table_Name' in df.columns:
+                    return FileFormat.EXCEL_SINGLE_SHEET
+                else:
+                    return FileFormat.EXCEL_MULTIPLE_SHEETS
+            else:
+                return FileFormat.EXCEL_MULTIPLE_SHEETS
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+
+    def load_data(self, file_path: str) -> Any:
+        """Load data from file based on format."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+
+        file_format = self.detect_file_format(file_path)
+
+        if file_format == FileFormat.CSV:
+            df = pd.read_csv(file_path)
+            df.columns = [col_name.strip() for col_name in df.columns]
+            return df.where(pd.notnull(df), None)
+
+        elif file_format == FileFormat.EXCEL_SINGLE_SHEET:
+            df = pd.read_excel(file_path)
+            df.columns = [col_name.strip() for col_name in df.columns]
+            return df.where(pd.notnull(df), None)
+
+        elif file_format == FileFormat.EXCEL_MULTIPLE_SHEETS:
+            excel_file = pd.ExcelFile(file_path)
+            data = {}
+            for sheet_name in excel_file.sheet_names:
+                df = pd.read_excel(file_path, sheet_name=sheet_name)
+                df.columns = [col_name.strip() for col_name in df.columns]
+                data[sheet_name] = df.where(pd.notnull(df), None)
+            return data
+
+    def process_data(self, data: Any, file_format: FileFormat):
+        """Process data based on format."""
+        if file_format in [FileFormat.CSV, FileFormat.EXCEL_SINGLE_SHEET]:
+            processor = CSVProcessor(self.locale, self.rows)
+            self.schema = processor.process_data(data)
+        elif file_format == FileFormat.EXCEL_MULTIPLE_SHEETS:
+            processor = ExcelMultiSheetProcessor(self.locale, self.rows)
+            self.schema = processor.process_data(data)
+
+    def convert(self, file_path: str, output_file_path: str = None) -> Dict:
+        """Convert file to JSON format."""
+        # Detect format and load data
+        file_format = self.detect_file_format(file_path)
+        data = self.load_data(file_path)
+
+        # Process data
+        self.process_data(data, file_format)
 
         # Generate JSON
         result = self.schema.to_dict()
@@ -366,45 +519,68 @@ class CSVToJSONConverter:
 
     def print_summary(self):
         """Print conversion summary."""
-        print("\nConversion Summary:")
-        print(f"- Number of tables: {len(self.schema.tables)}")
+        if not self.schema:
+            print("No schema available. Run convert() first.")
+            return
+
+        print("\n" + "=" * 50)
+        print("CONVERSION SUMMARY")
+        print("=" * 50)
+        print(f"Number of tables: {len(self.schema.tables)}")
 
         for table in self.schema.tables:
-            print(f"  - {table.name}: {len(table.columns)} columns")
-            if table.foreign_keys:
-                print(f"    - Foreign keys: {len(table.foreign_keys)}")
+            print(f"\n📊 Table: {table.name}")
+            print(f"   └─ Columns: {len(table.columns)}")
 
-        print(f"\nGeneration settings:")
-        print(f"- Rows to generate: {self.schema.output_config.rows}")
-        print(f"- Locale: {self.schema.output_config.locale}")
-        print(f"- Output format: {self.schema.output_config.format_type}")
+            # Show column details
+            for col in table.columns:
+                constraints = f" [{', '.join(col.constraints)}]" if col.constraints else ""
+                nullable = " (nullable)" if col.nullable else ""
+                print(f"      • {col.name}: {col.data_type}{constraints}{nullable}")
+
+            if table.foreign_keys:
+                print(f"   └─ Foreign Keys: {len(table.foreign_keys)}")
+                for fk in table.foreign_keys:
+                    print(f"      • {fk.child_column} -> {fk.parent_table}.{fk.parent_column}")
+
+        print(f"\n🔧 Generation Settings:")
+        print(f"   • Rows to generate: {self.schema.output_config.rows:,}")
+        print(f"   • Locale: {self.schema.output_config.locale}")
+        print(f"   • Output format: {self.schema.output_config.format_type}")
+        print("=" * 50)
 
 
 def main():
     """Main function to demonstrate usage."""
-    # Configuration
-    csv_file = "examples/sample_format.csv"
-    output_file = "examples/converted_output.json"
 
-    try:
-        # Create converter
-        converter = CSVToJSONConverter(locale="en_US", rows=20000)
+    # Example file paths - update these
+    files_to_convert = [
+        ("examples/sample_format.csv", "examples/output_from_csv.json"),
+        ("examples/single_sheet.xlsx", "examples/output_from_single_excel.json"),
+        ("examples/multiple_sheets.xlsx", "examples/output_from_multi_excel.json")
+    ]
 
-        # Convert CSV to JSON
-        result = converter.convert(csv_file, output_file)
+    for input_file, output_file in files_to_convert:
+        print(f"\n{'=' * 60}")
+        print(f"Converting: {input_file}")
+        print(f"{'=' * 60}")
 
-        # Print summary
-        converter.print_summary()
+        try:
+            # Create converter
+            converter = FileToJSONConverter(locale="en_US", rows=25000)
 
-        # Optional: Print first table structure
-        if result["tables"]:
-            print(f"\nFirst table structure:")
-            print(json.dumps(result["tables"][0], indent=2))
+            # Auto-detect format and convert
+            result = converter.convert(input_file, output_file)
 
-    except Exception as e:
-        print(f"Error during conversion: {e}")
-        import traceback
-        traceback.print_exc()
+            # Print detailed summary
+            converter.print_summary()
+
+        except FileNotFoundError:
+            print(f"⚠️  File not found: {input_file}")
+        except Exception as e:
+            print(f"❌ Error converting {input_file}: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

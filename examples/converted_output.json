@@ -1,123 +1,75 @@
 {
-    "locale": "en_US",
-    "output_format": "csv",
-    "row_count": 100,
-    "tables": [
+  "tables": [
+    {
+      "table_name": "customer",
+      "columns": [
         {
-            "table_name": "customer",
-            "columns": [
-                {
-                    "name": "cust_name",
-                    "type": "varchar(20)",
-                    "nullable": false,
-                    "primary_key": null,
-                    "length": NaN,
-                    "min_value": NaN,
-                    "max_value": NaN,
-                    "choice_values": null,
-                    "start_date": NaN,
-                    "end_date": NaN,
-                    "date_format": NaN,
-                    "datetimestamp_format": NaN,
-                    "value_prefix": NaN,
-                    "value_suffix": NaN,
-                    "rule": {
-                        "rule": "first_name"
-                    }
-                },
-                {
-                    "name": "cust_id",
-                    "type": "int",
-                    "nullable": false,
-                    "primary_key": "Yes",
-                    "length": 10.0,
-                    "min_value": NaN,
-                    "max_value": NaN,
-                    "choice_values": null,
-                    "start_date": NaN,
-                    "end_date": NaN,
-                    "date_format": NaN,
-                    "datetimestamp_format": NaN,
-                    "value_prefix": NaN,
-                    "value_suffix": NaN,
-                    "rule": {
-                        "rule": null
-                    }
-                }
-            ],
-            "foreign_keys": []
+          "name": "cust_name",
+          "type": "varchar(20)",
+          "rule": "first_name"
         },
         {
-            "table_name": "order",
-            "columns": [
-                {
-                    "name": "order_id",
-                    "type": "int",
-                    "nullable": false,
-                    "primary_key": "Yes",
-                    "length": NaN,
-                    "min_value": 11111.0,
-                    "max_value": 9999999.0,
-                    "choice_values": null,
-                    "start_date": NaN,
-                    "end_date": NaN,
-                    "date_format": NaN,
-                    "datetimestamp_format": NaN,
-                    "value_prefix": NaN,
-                    "value_suffix": NaN,
-                    "rule": {
-                        "rule": null
-                    }
-                },
-                {
-                    "name": "orde_cust_id",
-                    "type": "int",
-                    "nullable": false,
-                    "primary_key": null,
-                    "length": NaN,
-                    "min_value": NaN,
-                    "max_value": NaN,
-                    "choice_values": null,
-                    "start_date": NaN,
-                    "end_date": NaN,
-                    "date_format": NaN,
-                    "datetimestamp_format": NaN,
-                    "value_prefix": NaN,
-                    "value_suffix": NaN,
-                    "rule": {
-                        "rule": null
-                    }
-                },
-                {
-                    "name": "orde_category",
-                    "type": "varchar(20)",
-                    "nullable": true,
-                    "primary_key": null,
-                    "length": NaN,
-                    "min_value": NaN,
-                    "max_value": NaN,
-                    "choice_values": "personal, business",
-                    "start_date": NaN,
-                    "end_date": NaN,
-                    "date_format": NaN,
-                    "datetimestamp_format": NaN,
-                    "value_prefix": NaN,
-                    "value_suffix": NaN,
-                    "rule": {
-                        "rule": null
-                    }
-                }
-            ],
-            "foreign_keys": [
-                {
-                    "column": "orde_cust_id",
-                    "references": {
-                        "table": "customer",
-                        "column": "cust_id"
-                    },
-                    "relationship_type": "one_to_one"
-                }
-            ]
+          "name": "cust_id",
+          "type": "int",
+          "constraint": [
+            "PK"
+          ],
+          "length": 10
         }
-    ]
+      ]
+    },
+    {
+      "table_name": "order",
+      "columns": [
+        {
+          "name": "order_id",
+          "type": "int",
+          "constraint": [
+            "PK"
+          ],
+          "rule": {
+            "type": "range",
+            "min": 11111.0,
+            "max": 9999999.0
+          }
+        },
+        {
+          "name": "orde_cust_id",
+          "type": "int"
+        },
+        {
+          "name": "orde_category",
+          "type": "varchar(20)",
+          "nullable": true,
+          "rule": {
+            "type": "choice",
+            "value": [
+              "personal",
+              "business"
+            ]
+          }
+        }
+      ],
+      "foreign_keys": [
+        {
+          "parent_table": "customer",
+          "parent_column": "cust_id",
+          "child_column": "orde_cust_id",
+          "relationship_type": "one_to_one",
+          "nullable": false
+        }
+      ]
+    }
+  ],
+  "locale": "en_US",
+  "rows": 20000,
+  "output": {
+    "format": "csv",
+    "enable_fixed_width": true,
+    "directory": "./output/{timestamp}",
+    "filename_template": "{table_name}",
+    "alignment": "left",
+    "numeric_alignment": "left",
+    "default_column_width": 30
+  }
 }
