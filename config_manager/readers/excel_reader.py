@@ -7,13 +7,6 @@ from abc import ABC, abstractmethod
 from enum import Enum
 
 
-class FileFormat(Enum):
-    """Supported file formats."""
-    CSV = "csv"
-    EXCEL_SINGLE_SHEET = "excel_single"
-    EXCEL_MULTIPLE_SHEETS = "excel_multiple"
-
-
 class Column:
     """Represents a database column with its properties and rules."""
 
@@ -159,6 +152,62 @@ class Table:
         return result
 
 
+class OutputConfig:
+    """Configuration for output generation."""
+
+    def __init__(self, format_type: str = "csv", rows: int = 20000, locale: str = "en_US"):
+        self.format_type = format_type
+        self.rows = rows
+        self.locale = locale
+        self.enable_fixed_width = True
+        self.directory = "./output/{timestamp}"
+        self.filename_template = "{table_name}"
+        self.alignment = "left"
+        self.numeric_alignment = "left"
+        self.default_column_width = 30
+
+    def to_dict(self) -> Dict:
+        """Convert output config to dictionary."""
+        return {
+            "format": self.format_type,
+            "enable_fixed_width": self.enable_fixed_width,
+            "directory": self.directory,
+            "filename_template": self.filename_template,
+            "alignment": self.alignment,
+            "numeric_alignment": self.numeric_alignment,
+            "default_column_width": self.default_column_width
+        }
+
+
+class Schema:
+    """Represents the complete database schema."""
+
+    def __init__(self, locale: str = "en_US", rows: int = 20000):
+        self.tables: List[Table] = []
+        self.output_config = OutputConfig(rows=rows, locale=locale)
+
+    def add_table(self, table: Table):
+        """Add a table to the schema."""
+        self.tables.append(table)
+        return self
+
+    def get_table(self, name: str) -> Optional[Table]:
+        """Get a table by name."""
+        for table in self.tables:
+            if table.name == name:
+                return table
+        return None
+
+    def to_dict(self) -> Dict:
+        """Convert schema to dictionary representation."""
+        return {
+            "tables": [table.to_dict() for table in self.tables],
+            "locale": self.output_config.locale,
+            "rows": self.output_config.rows,
+            "output": self.output_config.to_dict()
+        }
+
+
 class RuleBuilder:
     """Builds rules for data generation based on CSV/Excel data."""
 
@@ -246,60 +295,11 @@ class RuleBuilder:
         return rule
 
 
-class OutputConfig:
-    """Configuration for output generation."""
-
-    def __init__(self, format_type: str = "csv", rows: int = 20000, locale: str = "en_US"):
-        self.format_type = format_type
-        self.rows = rows
-        self.locale = locale
-        self.enable_fixed_width = True
-        self.directory = "./output/{timestamp}"
-        self.filename_template = "{table_name}"
-        self.alignment = "left"
-        self.numeric_alignment = "left"
-        self.default_column_width = 30
-
-    def to_dict(self) -> Dict:
-        """Convert output config to dictionary."""
-        return {
-            "format": self.format_type,
-            "enable_fixed_width": self.enable_fixed_width,
-            "directory": self.directory,
-            "filename_template": self.filename_template,
-            "alignment": self.alignment,
-            "numeric_alignment": self.numeric_alignment,
-            "default_column_width": self.default_column_width
-        }
-
-
-class Schema:
-    """Represents the complete database schema."""
-
-    def __init__(self, locale: str = "en_US", rows: int = 20000):
-        self.tables: List[Table] = []
-        self.output_config = OutputConfig(rows=rows, locale=locale)
-
-    def add_table(self, table: Table):
-        """Add a table to the schema."""
-        self.tables.append(table)
-        return self
-
-    def get_table(self, name: str) -> Optional[Table]:
-        """Get a table by name."""
-        for table in self.tables:
-            if table.name == name:
-                return table
-        return None
-
-    def to_dict(self) -> Dict:
-        """Convert schema to dictionary representation."""
-        return {
-            "tables": [table.to_dict() for table in self.tables],
-            "locale": self.output_config.locale,
-            "rows": self.output_config.rows,
-            "output": self.output_config.to_dict()
-        }
+class FileFormat(Enum):
+    """Supported file formats."""
+    CSV = "csv"
+    EXCEL_SINGLE_SHEET = "excel_single"
+    EXCEL_MULTIPLE_SHEETS = "excel_multiple"
 
 
 class DataProcessor(ABC):
@@ -312,14 +312,14 @@ class DataProcessor(ABC):
 
     def _create_column(self, row: pd.Series) -> Column:
         """Create a column from row data."""
-        column = Column(row["Column_Name"], row["Column_Data_Type"])
+        column = Column(row["column_name"], row["column_data_type"])
 
         # Set nullable
-        if row.get("Nullable") == True or str(row.get("Nullable", "")).upper() == "TRUE":
+        if row.get("nullable") == True or str(row.get("nullable", "")).upper() == "TRUE":
             column.set_nullable(True)
 
         # Add primary key constraint
-        if row.get("PK") == "Yes":
+        if row.get("pk") == "Yes":
             column.add_constraint("PK")
 
         # Set rule
@@ -328,32 +328,32 @@ class DataProcessor(ABC):
             column.set_rule(rule)
 
         # Set length
-        if pd.notna(row.get("Length")):
-            column.set_length(int(row["Length"]))
+        if pd.notna(row.get("length")):
+            column.set_length(int(row["length"]))
 
         # Set default
-        if pd.notna(row.get("Default_Value")):
-            column.set_default(str(row["Default_Value"]))
+        if pd.notna(row.get("default_value")):
+            column.set_default(str(row["default_value"]))
 
         # Set sensitivity
-        if pd.notna(row.get("Sensitivity")):
-            column.set_sensitivity(str(row["Sensitivity"]))
+        if pd.notna(row.get("sensitivity")):
+            column.set_sensitivity(str(row["sensitivity"]))
 
         # Set null percentage
-        if pd.notna(row.get("Null_Percentage")):
-            column.set_null_percentage(int(row["Null_Percentage"]))
+        if pd.notna(row.get("null_percentage")):
+            column.set_null_percentage(int(row["null_percentage"]))
 
         return column
 
     def _create_foreign_key(self, row: pd.Series) -> ForeignKey:
         """Create a foreign key from row data."""
-        nullable = row.get("Nullable") == True or str(row.get("Nullable", "")).upper() == "TRUE"
+        nullable = row.get("nullable") == True or str(row.get("nullable", "")).upper() == "TRUE"
 
         return ForeignKey(
-            parent_table=row["Parent_Table_Name"],
-            parent_column=row["Parent_Column_Name"],
-            child_column=row["Column_Name"],
-            relationship_type=row["FK_Relationship_Type"],
+            parent_table=row["parent_table_name"],
+            parent_column=row["parent_column_name"],
+            child_column=row["column_name"],
+            relationship_type=row["fk_relationship_type"],
             nullable=nullable
         )
 
@@ -370,7 +370,7 @@ class CSVProcessor(DataProcessor):
         schema = Schema(self.locale, self.rows)
 
         # Group by table name
-        table_groups = df.groupby('Table_Name')
+        table_groups = df.groupby('table_name')
 
         for table_name, group in table_groups:
             table = Table(table_name)
@@ -381,7 +381,7 @@ class CSVProcessor(DataProcessor):
                 table.add_column(column)
 
                 # Handle foreign keys
-                if row.get("FK") == "Yes":
+                if row.get("fk") == "Yes":
                     foreign_key = self._create_foreign_key(row)
                     table.add_foreign_key(foreign_key)
 
@@ -414,7 +414,7 @@ class ExcelMultiSheetProcessor(DataProcessor):
                 table.add_column(column)
 
                 # Handle foreign keys
-                if row.get("FK") == "Yes":
+                if row.get("fk") == "Yes":
                     foreign_key = self._create_foreign_key(row)
                     table.add_foreign_key(foreign_key)
 
@@ -424,7 +424,7 @@ class ExcelMultiSheetProcessor(DataProcessor):
 
     def _is_table_definition_sheet(self, df: pd.DataFrame) -> bool:
         """Check if sheet contains table definition data."""
-        required_columns = ["Column_Name", "Column_Data_Type"]
+        required_columns = ["column_name", "column_data_type"]
         return all(col in df.columns for col in required_columns)
 
 
@@ -438,9 +438,10 @@ class FileToJSONConverter:
 
     def detect_file_format(self, file_path: str) -> FileFormat:
         """Detect the file format and structure."""
-        if file_path.lower().endswith('.csv'):
+        base_file_name, file_ext = os.path.splitext(file_path)
+        if file_ext == '.csv':
             return FileFormat.CSV
-        elif file_path.lower().endswith(('.xlsx', '.xls')):
+        elif file_ext in ['.xlsx', '.xls']:
             # Check if it's single sheet or multiple sheets
             excel_file = pd.ExcelFile(file_path)
             if len(excel_file.sheet_names) == 1:
@@ -455,6 +456,10 @@ class FileToJSONConverter:
         else:
             raise ValueError(f"Unsupported file format: {file_path}")
 
+    def _convert_columns_slug(self, df: pd.DataFrame) -> pd.DataFrame:
+        df.columns = df.columns = [col_name.strip().lower().replace(' ', '_') for col_name in df.columns]
+        return df
+
     def load_data(self, file_path: str) -> Any:
         """Load data from file based on format."""
         if not os.path.exists(file_path):
@@ -464,12 +469,12 @@ class FileToJSONConverter:
 
         if file_format == FileFormat.CSV:
             df = pd.read_csv(file_path)
-            df.columns = [col_name.strip() for col_name in df.columns]
+            df = self._convert_columns_slug(df)
             return df.where(pd.notnull(df), None)
 
         elif file_format == FileFormat.EXCEL_SINGLE_SHEET:
             df = pd.read_excel(file_path)
-            df.columns = [col_name.strip() for col_name in df.columns]
+            df = self._convert_columns_slug(df)
             return df.where(pd.notnull(df), None)
 
         elif file_format == FileFormat.EXCEL_MULTIPLE_SHEETS:
@@ -477,9 +482,10 @@ class FileToJSONConverter:
             data = {}
             for sheet_name in excel_file.sheet_names:
                 df = pd.read_excel(file_path, sheet_name=sheet_name)
-                df.columns = [col_name.strip() for col_name in df.columns]
+                df = self._convert_columns_slug(df)
                 data[sheet_name] = df.where(pd.notnull(df), None)
             return data
+        return None
 
     def process_data(self, data: Any, file_format: FileFormat):
         """Process data based on format."""

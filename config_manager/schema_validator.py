@@ -778,7 +778,7 @@ class SchemaValidator:
         reason = None
 
         if isinstance(length_constraint, int):
-            if length_constraint < 20:
+            if length_constraint <= 20:
                 default_rule = {"type": "word", "min": 0, "max": length_constraint}
                 reason = f"default_word_rule_for_{length_constraint}"
                 suggestion_msg = f"Added default 'word' for string column with length {length_constraint}"
@@ -792,7 +792,7 @@ class SchemaValidator:
 
             ref_length = max_length if max_length is not None else min_length
 
-            if ref_length < 20:
+            if ref_length <= 20:
                 default_rule = {"type": "word"}
                 reason = f"default_word_rule_for_max_length_{ref_length}"
                 suggestion_msg = f"Added default 'word' for string column with max length {ref_length}"
