@@ -159,7 +159,7 @@ class OutputConfig:
         self.format_type = format_type
         self.rows = rows
         self.locale = locale
-        self.enable_fixed_width = True
+        self.enable_fixed_width = False
         self.directory = "./output/{timestamp}"
         self.filename_template = "{table_name}"
         self.alignment = "left"
@@ -215,30 +215,30 @@ class RuleBuilder:
     def build_rule(row: pd.Series) -> Optional[Union[str, Dict]]:
         """Build a rule from CSV/Excel row data."""
         # Direct rule specification
-        if pd.notna(row.get("Rule")):
-            return str(row["Rule"])
+        if pd.notna(row.get("rule")):
+            return str(row["rule"])
 
         # Range rule
-        if pd.notna(row.get("Minimum_Value")) and pd.notna(row.get("Maximum_Value")):
+        if pd.notna(row.get("minimum_value")) and pd.notna(row.get("maximum_value")):
             rule = {
                 "type": "range",
-                "min": row["Minimum_Value"],
-                "max": row["Maximum_Value"]
+                "min": row["minimum_value"],
+                "max": row["maximum_value"]
             }
             return RuleBuilder._add_prefix_suffix(rule, row)
 
         # Choice rule with probabilities
-        if pd.notna(row.get("Choice_Values")):
-            choices = [choice.strip() for choice in str(row["Choice_Values"]).split(',')]
+        if pd.notna(row.get("choice_values")):
+            choices = [choice.strip() for choice in str(row["choice_values"]).split(',')]
             rule = {
                 "type": "choice",
                 "value": choices
             }
 
             # Add probabilities if present
-            if pd.notna(row.get("Choice_Probabilities")):
+            if pd.notna(row.get("choice_probabilities")):
                 try:
-                    probs = eval(row["Choice_Probabilities"])  # Handle dict string
+                    probs = eval(row["choice_probabilities"])  # Handle dict string
                     if isinstance(probs, dict):
                         rule["probabilities"] = probs
                 except:
@@ -247,39 +247,39 @@ class RuleBuilder:
             return RuleBuilder._add_prefix_suffix(rule, row)
 
         # Date range rule
-        if pd.notna(row.get("Start_Date")) or pd.notna(row.get("End_Date")):
+        if pd.notna(row.get("start_date")) or pd.notna(row.get("end_date")):
             rule = {"type": "date_range"}
 
-            if pd.notna(row.get("Start_Date")):
-                rule["start"] = str(row["Start_Date"])
-            if pd.notna(row.get("End_Date")):
-                rule["end"] = str(row["End_Date"])
-            if pd.notna(row.get("Date_Format")):
-                rule["format"] = str(row["Date_Format"])
+            if pd.notna(row.get("start_date")):
+                rule["start"] = str(row["start_date"])
+            if pd.notna(row.get("end_date")):
+                rule["end"] = str(row["end_date"])
+            if pd.notna(row.get("date_format")):
+                rule["format"] = str(row["date_format"])
 
             return RuleBuilder._add_prefix_suffix(rule, row)
 
         # Timestamp range rule
-        if pd.notna(row.get("Datetimestamp_Format")):
+        if pd.notna(row.get("datetimestamp_format")):
             rule = {"type": "timestamp_range"}
 
-            if pd.notna(row.get("Start_Date")):
-                rule["start"] = str(row["Start_Date"])
-            if pd.notna(row.get("Datetimestamp_Format")):
-                rule["format"] = str(row["Datetimestamp_Format"])
+            if pd.notna(row.get("start_date")):
+                rule["start"] = str(row["start_date"])
+            if pd.notna(row.get("datetimestamp_format")):
+                rule["format"] = str(row["datetimestamp_format"])
 
             return RuleBuilder._add_prefix_suffix(rule, row)
 
         # Regex rule
-        if pd.notna(row.get("Regex_Pattern")):
+        if pd.notna(row.get("regex_pattern")):
             rule = {
                 "type": "regex",
-                "regex": str(row["Regex_Pattern"])
+                "regex": str(row["regex_pattern"])
             }
             return RuleBuilder._add_prefix_suffix(rule, row)
 
         # Only prefix/suffix
-        if pd.notna(row.get("Value_Prefix")) or pd.notna(row.get("Value_Suffix")):
+        if pd.notna(row.get("value_prefix")) or pd.notna(row.get("value_suffix")):
             rule = {}
             return RuleBuilder._add_prefix_suffix(rule, row)
 
@@ -288,10 +288,10 @@ class RuleBuilder:
     @staticmethod
     def _add_prefix_suffix(rule: Dict, row: pd.Series) -> Dict:
         """Add prefix and suffix to rule if specified."""
-        if pd.notna(row.get("Value_Prefix")):
-            rule["prefix"] = str(row["Value_Prefix"])
-        if pd.notna(row.get("Value_Suffix")):
-            rule["suffix"] = str(row["Value_Suffix"])
+        if pd.notna(row.get("value_prefix")):
+            rule["prefix"] = str(row["value_prefix"])
+        if pd.notna(row.get("value_suffix")):
+            rule["suffix"] = str(row["value_suffix"])
         return rule
 
 
