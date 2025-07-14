@@ -576,7 +576,6 @@ class ConstraintManager:
 
         for attempt in range(max_attempts):
             value = value_generator_func()
-            print(value)
             if value not in existing_values:
                 self.add_pk_value(table_name, column_name, value)
                 return value
