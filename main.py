@@ -768,9 +768,6 @@ class OptimizedDataGenerationOrchestrator:
             return
 
         table_name = table_metadata["table_name"]
-        schema = {}
-        for column in table_metadata["columns"]:
-            schema.update({column['name']: column['type']})
 
         try:
             file_name = table_metadata.get('file_name', table_name)
@@ -778,7 +775,7 @@ class OptimizedDataGenerationOrchestrator:
                     table_name=table_name,
                     config=self.config.output,
                     logger=self.logger,
-                    schema=schema,
+                    schema=table_metadata,
                     file_name=file_name,
             ) as writer:
 

@@ -1,22 +1,11 @@
-"""
-COMPLETE UNIFIED WRITER - All Formats Supported
-
-This extends the working version with:
-- Compression support (gzip, bz2, lzma)
-- SQL Query writer
-- Excel writer (xlsx/xls)
-- Parquet writer
-- Enhanced error handling and fallbacks
-"""
-
 import os
 import logging
 from typing import Dict, List, Any, Optional
 import pandas as pd
 import time
-import numpy as np
 
 from config_manager.config_manager import OutputConfig
+from .data_optimizer import DataOptimizer
 
 
 class FixedWidthFormatter:
@@ -133,129 +122,6 @@ class FixedWidthFormatter:
             formatted_headers.append(formatted_col)
 
         return formatted_headers
-
-
-class DataOptimizer:
-    """Handles pandas data type optimization and cleaning"""
-
-    def __init__(self, logger: logging.Logger, schema: dict = None):
-        self.logger = logger
-        self.schema_cache = schema if schema is not None else {}
-        self.datetime_formats = {}
-
-    def optimize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Apply all optimizations to a DataFrame"""
-        if df.empty:
-            return df
-
-        # Cache schema from first batch
-        if not self.schema_cache:
-            self._infer_schema(df)
-
-        # Apply optimizations
-        df = self._optimize_dtypes(df)
-        df = self._clean_data(df)
-        return df
-
-    def _infer_schema(self, df: pd.DataFrame):
-        """Infer optimal data types for each column"""
-        for col in df.columns:
-            series = df[col].dropna()
-            if len(series) == 0:
-                continue
-
-            # Numeric optimization
-            if pd.api.types.is_numeric_dtype(series):
-                self.schema_cache[col] = self._get_optimal_numeric_type(series)
-
-            # Datetime detection
-            elif self._is_datetime_column(series):
-                self.schema_cache[col] = 'datetime64[ns]'
-
-            # Categorical optimization
-            elif self._should_be_categorical(series):
-                self.schema_cache[col] = 'category'
-
-            else:
-                self.schema_cache[col] = 'object'
-
-        self.logger.debug(f"Schema inferred: {self.schema_cache}")
-
-    def _get_optimal_numeric_type(self, series: pd.Series) -> str:
-        """Find the smallest numeric type that fits the data"""
-        if series.dtype.kind in 'iu':  # integers
-            min_val, max_val = series.min(), series.max()
-            if min_val >= 0:  # unsigned
-                for dtype in ['uint8', 'uint16', 'uint32', 'uint64']:
-                    if max_val <= np.iinfo(getattr(np, dtype)).max:
-                        return dtype
-            else:  # signed
-                for dtype in ['int8', 'int16', 'int32', 'int64']:
-                    info = np.iinfo(getattr(np, dtype))
-                    if info.min <= min_val <= max_val <= info.max:
-                        return dtype
-        elif series.dtype.kind == 'f':  # floats
-            # Try float32 if precision allows
-            if (series.astype('float32') == series).all():
-                return 'float32'
-        return str(series.dtype)
-
-    def _is_datetime_column(self, series: pd.Series) -> bool:
-        """Check if series contains datetime data"""
-        if series.dtype != 'object':
-            return False
-
-        sample = series.head(min(10, len(series)))
-        successful_conversions = 0
-
-        for value in sample:
-            if pd.isna(value):
-                continue
-            try:
-                pd.to_datetime(str(value), errors='raise')
-                successful_conversions += 1
-            except:
-                pass
-
-        non_null_count = sample.notna().sum()
-        return (successful_conversions / non_null_count) > 0.8 if non_null_count > 0 else False
-
-    def _should_be_categorical(self, series: pd.Series) -> bool:
-        """Check if series should be categorical"""
-        unique_ratio = series.nunique() / len(series)
-        return unique_ratio < 0.5 and series.nunique() < 1000
-
-    def _optimize_dtypes(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Apply cached schema to DataFrame"""
-        for col, dtype in self.schema_cache.items():
-            if col in df.columns:
-                try:
-                    if dtype == 'category':
-                        df[col] = df[col].astype('category')
-                    elif dtype == 'datetime64[ns]':
-                        df[col] = pd.to_datetime(df[col], errors='coerce')
-                    elif dtype.startswith(('int', 'uint', 'float')):
-                        df[col] = pd.to_numeric(df[col], errors='coerce').astype(dtype)
-                except Exception as e:
-                    self.logger.warning(f"Failed to optimize {col}: {e}")
-        return df
-
-    def _clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean and validate data"""
-        # Remove completely empty rows
-        df = df.dropna(how='all')
-
-        # Fill NaN values appropriately
-        for col in df.columns:
-            if col in self.schema_cache:
-                dtype = self.schema_cache[col]
-                if dtype.startswith(('int', 'uint', 'float')):
-                    df[col] = df[col].fillna(0)
-                elif dtype == 'object':
-                    df[col] = df[col].fillna('')
-
-        return df
-
 
 # ===== PROGRESS TRACKING =====
 
@@ -880,10 +746,11 @@ class Writer:
 
         # Ensure output directory exists
         os.makedirs(os.path.dirname(file_path) or '.', exist_ok=True)
+        target_format = getattr(config, 'format', 'csv')
 
         # Initialize common components (safely)
         try:
-            self.optimizer = DataOptimizer(self.logger, schema)
+            self.optimizer = DataOptimizer(self.logger, schema, target_format)
         except Exception:
             self.optimizer = None
 

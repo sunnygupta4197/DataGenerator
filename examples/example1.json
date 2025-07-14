@@ -322,7 +322,7 @@
     "rows": 20000,
     "output": {
         "format": "csv",
-        "enable_fixed_width": true,
+        "enable_fixed_width": false,
         "directory": "./output/{timestamp}",
         "filename_template": "{table_name}",
         "alignment": "left",

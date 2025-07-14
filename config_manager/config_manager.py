@@ -1318,7 +1318,7 @@ class ConfigurationManager:
         for error in errors:
             self.logger.error(f"  - {error}")
 
-    def _load_config(self, config_path: Path, rows: int = None) -> dict | None:
+    def _load_config(self, config_path: Path, rows: int = None) -> Union[dict, None]:
         """Load JSON configuration file"""
         try:
             config_reader = ConfigReader(config_path)
