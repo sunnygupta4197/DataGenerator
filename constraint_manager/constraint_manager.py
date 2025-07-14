@@ -141,6 +141,9 @@ class ConstraintManager:
         # Relationship constraint tracking
         self._one_to_one_used = defaultdict(set)
         self._one_to_one_column_pools = {}
+        self._one_to_one_iterators = {}
+        self._one_to_one_locks = {}
+        self._exhausted_pools = set()
         self._one_to_many_distribution = defaultdict(dict)
 
         # Performance settings
@@ -570,8 +573,10 @@ class ConstraintManager:
         # Get existing values for more efficient collision detection
         existing_values = self._pk_cache.get(constraint_key, set())
 
+
         for attempt in range(max_attempts):
             value = value_generator_func()
+            print(value)
             if value not in existing_values:
                 self.add_pk_value(table_name, column_name, value)
                 return value
@@ -762,32 +767,56 @@ class ConstraintManager:
 
     # ===================== OPTIMIZED RELATIONSHIP CONSTRAINTS =====================
 
-    def handle_one_to_one_relationship(self, fk_config: Dict, table_name: str, available_values: List[Any]) -> Optional[Any]:
-        """Handle one-to-one relationship constraints with optimization"""
+    def handle_one_to_one_relationship(self, fk_config: Dict, table_name: str, available_values: List[Any]) -> Optional[
+        Any]:
+        """OPTIMIZED: Handle one-to-one relationship constraints with O(1) performance"""
         parent_table = fk_config["parent_table"]
         parent_column = fk_config["parent_column"]
         child_column = fk_config["child_column"]
         constraint_key = f"{parent_table}.{parent_column}:{table_name}.{child_column}"
-        with self._lock:
-            used_values = self._one_to_one_used[constraint_key]
 
-            # Optimized filtering using set operations
-            available_set = set(available_values)
-            unused_set = available_set - used_values
+        # Check if pool is exhausted
+        if constraint_key in self._exhausted_pools:
+            return None
 
-            if not unused_set:
-                self.logger.warning(f"FK pool exhausted for {constraint_key}")
-                self.logger.warning(f"Available values: {len(available_values)}")
-                self.logger.warning(f"Unused values for {constraint_key}: {len(available_values)}")
-                self.logger.warning(f"No unused values available for one-to-one relationship {constraint_key}")
+        # Initialize iterator if not exists
+        if constraint_key not in self._one_to_one_iterators:
+            self._prepare_one_to_one_iterator(constraint_key, available_values)
+
+        # Get next value from iterator (O(1) operation)
+        if constraint_key not in self._one_to_one_locks:
+            import threading
+            self._one_to_one_locks[constraint_key] = threading.Lock()
+
+        with self._one_to_one_locks[constraint_key]:
+            try:
+                selected_value = next(self._one_to_one_iterators[constraint_key])
+                self.logger.debug(f"Assigned one-to-one value {selected_value} for {constraint_key}")
+                return selected_value
+            except StopIteration:
+                # Mark as exhausted
+                self._exhausted_pools.add(constraint_key)
+                self.logger.warning(f"One-to-one pool exhausted for {constraint_key}")
                 return None
 
-            # Select and mark as used
-            selected_value = random.choice(list(unused_set))
-            used_values.add(selected_value)
+    def _prepare_one_to_one_iterator(self, constraint_key: str, available_values: List[Any]):
+        """Prepare optimized iterator for one-to-one relationship"""
+        import random
+        import threading
 
-        self.logger.debug(f"Assigned one-to-one value {selected_value} for {constraint_key}")
-        return selected_value
+        if not available_values:
+            self._exhausted_pools.add(constraint_key)
+            return
+
+        # Create shuffled copy for randomness
+        shuffled_values = available_values.copy()
+        random.shuffle(shuffled_values)
+
+        # Create iterator
+        self._one_to_one_iterators[constraint_key] = iter(shuffled_values)
+        self._one_to_one_locks[constraint_key] = threading.Lock()
+
+        self.logger.debug(f"Prepared one-to-one iterator for {constraint_key} with {len(shuffled_values)} values")
 
     def handle_one_to_many_relationship(self, fk_config: Dict, available_values: List[Any],
                                         record_count: int) -> List[Any]:
@@ -1127,13 +1156,22 @@ class ConstraintManager:
         """Reset used variables tracking with proper cleanup"""
         with self._lock:
             if current_table:
-                self.logger.info(f"Completed table '{current_table}' - restting one-to-one constraints for the next table")
+                self.logger.info(
+                    f"Completed table '{current_table}' - resetting one-to-one constraints for the next table")
 
+            # OPTIMIZED: Clear the old tracking system
             total_freed = sum(len(used_set) for used_set in self._one_to_one_used.values())
             self._one_to_one_used.clear()
 
-            if total_freed > 0:
-                self.logger.info(f"Reset one-to-one constraints - freed {total_freed} used values for next table")
+            # OPTIMIZED: Clear the new iterator system
+            iterator_count = len(self._one_to_one_iterators)
+            self._one_to_one_iterators.clear()
+            self._one_to_one_locks.clear()
+            self._exhausted_pools.clear()
+
+            if total_freed > 0 or iterator_count > 0:
+                self.logger.info(
+                    f"Reset one-to-one constraints - freed {total_freed} used values and {iterator_count} iterators for next table")
 
     # ===================== STATISTICS AND MONITORING =====================
 

@@ -38,8 +38,12 @@
             "columns": [
                 {
                     "name": "customer_id",
-                    "type": "int",
-					"constraint": ["PK"]
+                    "type": "str",
+					"constraint": ["PK"],
+                    "rule": {
+                      "type": "regex",
+                      "regex": "^\\d{16}"
+                    }
                 },
                 {
                     "name": "first_name",

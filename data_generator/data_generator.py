@@ -1,3 +1,5 @@
+import re
+import math
 import random
 from faker import Faker
 from datetime import datetime, timedelta
@@ -325,12 +327,86 @@ class BatchGenerator:
         """Check if the rule generates naturally unique values"""
         if isinstance(rule, dict):
             rule_type = rule.get("type", "")
+
             # These rule types generate unique values by nature
-            return rule_type in ["uuid", "sequence", "range"]
+            if rule_type in ["uuid", "sequence", "range"]:
+                return True
+
+            # Dynamic check for regex patterns
+            if rule_type == "regex":
+                regex_pattern = rule.get("regex", "")
+                if regex_pattern:
+                    entropy = self._calculate_regex_entropy(regex_pattern)
+                    # Consider patterns with >= 40 bits of entropy as unique enough
+                    # 2^40 ≈ 1 trillion possibilities
+                    return entropy >= 40.0
+
+            return False
         elif isinstance(rule, str):
             # UUID faker methods generate unique values
             return "uuid" in rule.lower()
         return False
+
+    def _calculate_regex_entropy(self, regex_pattern: str) -> float:
+        """Calculate approximate entropy of a regex pattern"""
+        try:
+            # Character set sizes for common patterns
+            charset_sizes = {
+                r'\\d': 10,  # digits 0-9
+                r'[0-9]': 10,  # digits 0-9
+                r'\\w': 62,  # word chars (a-z, A-Z, 0-9, _)
+                r'[a-z]': 26,  # lowercase letters
+                r'[A-Z]': 26,  # uppercase letters
+                r'[a-zA-Z]': 52,  # all letters
+                r'[a-f]': 6,  # hex lowercase
+                r'[A-F]': 6,  # hex uppercase
+                r'[0-9a-f]': 16,  # hex lowercase with digits
+                r'[0-9A-F]': 16,  # hex uppercase with digits
+                r'[0-9a-fA-F]': 16,  # hex mixed case
+                r'\.': 95,  # any printable ASCII
+            }
+
+            total_entropy = 0.0
+            pattern = regex_pattern.strip('^$')  # Remove anchors for analysis
+
+            # Look for quantified patterns like \d{16}, [a-z]{5}, etc.
+            quantified_matches = re.findall(r'(\\[dw]|\[[^\]]+\])\{(\d+)(?:,(\d+))?\}', pattern)
+            for match in quantified_matches:
+                char_class, min_count, max_count = match
+                char_class_size = charset_sizes.get(char_class, 36)  # default to alphanumeric
+
+                if max_count:  # Variable length {min,max}
+                    avg_length = (int(min_count) + int(max_count)) / 2
+                else:  # Fixed length {count}
+                    avg_length = int(min_count)
+
+                entropy = avg_length * math.log2(char_class_size)
+                total_entropy += entropy
+
+            # Look for simple quantified patterns like \d+ or [a-z]*
+            simple_quantified = re.findall(r'(\\[dw]|\[[^\]]+\])[\+\*]', pattern)
+            for char_class in simple_quantified:
+                char_class_size = charset_sizes.get(char_class, 36)
+                # Assume average length of 8 for + and * quantifiers (conservative)
+                avg_length = 8
+                entropy = avg_length * math.log2(char_class_size)
+                total_entropy += entropy
+
+            # Count non-quantified character classes
+            remaining_pattern = re.sub(r'(\\[dw]|\[[^\]]+\])\{[^}]+\}', '', pattern)
+            remaining_pattern = re.sub(r'(\\[dw]|\[[^\]]+\])[\+\*]', '', remaining_pattern)
+
+            for char_class, size in charset_sizes.items():
+                if char_class in remaining_pattern:
+                    count = remaining_pattern.count(char_class)
+                    entropy = count * math.log2(size)
+                    total_entropy += entropy
+
+            return total_entropy
+
+        except Exception as e:
+            self.logger.debug(f"Error calculating regex entropy for '{regex_pattern}': {e}")
+            return 0.0
 
     def _generate_fallback_pk(self, col_type: str, table_name: str, global_index: int) -> Any:
         """Generate fallback PK value when all else fails"""
