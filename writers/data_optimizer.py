@@ -5,14 +5,10 @@ import warnings
 
 
 class DataOptimizer:
-    """Optimized DataOptimizer that works directly with validated schema from SchemaValidator"""
-
     def __init__(self, logger: logging.Logger, schema: dict = None, target_format: str = None):
         self.logger = logger
-        self.validated_schema = schema  # Already validated and converted schema
+        self.validated_schema = schema
         self.target_format = target_format or 'csv'
-
-        # Direct mapping from validated schema
         self.column_mappings = {}
         self.datetime_formats = {}
 
@@ -20,7 +16,6 @@ class DataOptimizer:
             self._build_column_mappings()
 
     def _build_column_mappings(self):
-        """Build column mappings directly from validated schema"""
         table_name = self.validated_schema.get('table_name')
         columns = self.validated_schema.get('columns', [])
 
@@ -28,8 +23,6 @@ class DataOptimizer:
             col_name = column.get('name')
             if not col_name:
                 continue
-
-            # Store all the validated information
             mapping = {
                 'type': column.get('type'),
                 'nullable': column.get('nullable', True),
@@ -42,41 +35,57 @@ class DataOptimizer:
                 'table_name': table_name,
                 'corrections': column.get('corrections', [])
             }
-
-            # Extract datetime format if available
             rule = column.get('rule')
             if isinstance(rule, dict) and rule.get('format'):
                 self.datetime_formats[col_name] = rule['format']
 
-            # Store mapping
             self.column_mappings[col_name] = mapping
             if table_name:
                 self.column_mappings[f"{table_name}.{col_name}"] = mapping
 
     def optimize_dataframe(self, df: pd.DataFrame, target_format: str = None) -> pd.DataFrame:
-        """Main optimization method that applies database-specific conversions"""
         if df.empty:
             return df
-
         format_name = target_format or self.target_format
-
-        # Apply format-specific conversions
         df_optimized = self._apply_format_conversions(df, format_name)
-        print(df_optimized)
-
         return df_optimized
 
     def _apply_format_conversions(self, df: pd.DataFrame, target_format: str) -> pd.DataFrame:
-        """Apply format-specific conversions based on target format"""
         df_converted = df.copy()
-
         for col_name in df.columns:
             mapping = self.column_mappings.get(col_name)
             if not mapping:
                 self.logger.debug(f"No mapping found for column '{col_name}', skipping optimization")
                 continue
+            if self._should_format_as_datetime_string(mapping):
+                self.logger.debug(f"Detected string column with datetime rule '{col_name}', formatting as string")
+                try:
+                    rule = mapping.get('rule', {})
+                    df_converted[col_name] = self._format_datetime_string_column(df_converted[col_name], rule, mapping)
+                    continue
+                except Exception as e:
+                    self.logger.warning(f"Failed to format datetime string column '{col_name}': {e}")
 
-            # Apply conversion based on target format
+            elif self._should_convert_to_datetime(mapping):
+                self.logger.debug(f"Detected datetime column '{col_name}', converting from numeric timestamp")
+                try:
+                    rule = mapping.get('rule', {})
+                    original_type = self._get_original_type(mapping)
+                    df_converted[col_name] = self._convert_to_proper_datetime(df_converted[col_name], rule,
+                                                                              original_type or 'datetime')
+
+                    rule = mapping.get('rule', {})
+                    original_type = self._get_original_type(mapping) or 'datetime'
+
+                    if target_format.lower() in ['json', 'jsonl']:
+                        df_converted[col_name] = self._format_datetime_for_json_from_datetime(df_converted[col_name],
+                                                                                              rule)
+                    else:
+                        df_converted[col_name] = self._format_datetime_as_string_from_datetime(df_converted[col_name],
+                                                                                               rule, original_type)
+                    continue
+                except Exception as e:
+                    self.logger.warning(f"Failed to convert datetime column '{col_name}': {e}")
             try:
                 if target_format.lower() == 'parquet':
                     df_converted[col_name] = self._convert_for_parquet(df_converted[col_name], mapping)
@@ -87,27 +96,109 @@ class DataOptimizer:
                 elif target_format.lower() in ['json', 'jsonl']:
                     df_converted[col_name] = self._convert_for_json(df_converted[col_name], mapping)
                 else:
-                    # Default conversion
                     df_converted[col_name] = self._convert_for_default(df_converted[col_name], mapping)
 
             except Exception as e:
                 self.logger.warning(f"Failed to convert column '{col_name}': {e}")
-                # Keep original data if conversion fails
                 continue
 
         return df_converted
 
+    def _should_format_as_datetime_string(self, mapping: Dict[str, Any]) -> bool:
+        col_type = mapping.get('type', '').lower()
+        rule = mapping.get('rule', {})
+        original_type = self._get_original_type(mapping)
+        if original_type and original_type.lower() in ['date', 'datetime', 'timestamp', 'time']:
+            return False
+
+        if col_type == 'str' and self._is_datetime_rule(rule):
+            return True
+
+        return False
+
+    def _format_datetime_string_column(self, series: pd.Series, rule: Dict, mapping: Dict[str, Any]) -> pd.Series:
+        try:
+            if pd.api.types.is_datetime64_any_dtype(series):
+                datetime_series = series
+            else:
+                if self._is_numeric_timestamp(series):
+                    datetime_series = self._convert_numeric_timestamp(series)
+                else:
+                    format_str = rule.get('format') if isinstance(rule, dict) else None
+                    if format_str:
+                        datetime_series = pd.to_datetime(series, format=format_str, errors='coerce')
+                    else:
+                        datetime_series = pd.to_datetime(series, errors='coerce')
+
+            rule_type = rule.get('type', '').lower() if isinstance(rule, dict) else ''
+            format_str = rule.get('format') if isinstance(rule, dict) else None
+
+            if format_str:
+                return datetime_series.dt.strftime(format_str)
+            elif rule_type == 'date_range':
+                return datetime_series.dt.strftime('%Y-%m-%d')
+            elif rule_type == 'time_range':
+                return datetime_series.dt.strftime('%H:%M:%S')
+            elif rule_type == 'timestamp_range':
+                return datetime_series.dt.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                return datetime_series.dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        except Exception as e:
+            self.logger.warning(f"Failed to format datetime string column {series.name}: {e}")
+            return series.astype(str)
+
+    def _should_convert_to_datetime(self, mapping: Dict[str, Any]) -> bool:
+        original_type = self._get_original_type(mapping)
+        if original_type and original_type.lower() in ['date', 'datetime', 'timestamp', 'time']:
+            return True
+
+        col_type = mapping.get('type', '').lower()
+        if col_type in ['date', 'datetime', 'timestamp', 'time']:
+            return True
+
+        return False
+
+    def _format_datetime_as_string_from_datetime(self, series: pd.Series, rule: Dict, original_type: str) -> pd.Series:
+        try:
+            if original_type and original_type.lower() == 'date':
+                return series.dt.strftime('%Y-%m-%d')
+            elif original_type and original_type.lower() == 'time':
+                return series.dt.strftime('%H:%M:%S')
+            elif original_type and original_type.lower() in ['datetime', 'timestamp']:
+                return series.dt.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                rule_type = rule.get('type', '').lower() if isinstance(rule, dict) else ''
+                if rule_type == 'date_range':
+                    return series.dt.strftime('%Y-%m-%d')
+                elif rule_type == 'time_range':
+                    return series.dt.strftime('%H:%M:%S')
+                else:
+                    return series.dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        except Exception as e:
+            self.logger.warning(f"Failed to format datetime as string for {series.name}: {e}")
+            return series.astype(str)
+
+    def _format_datetime_for_json_from_datetime(self, series: pd.Series, rule: Dict) -> pd.Series:
+        try:
+            rule_type = rule.get('type', '').lower() if isinstance(rule, dict) else ''
+            if rule_type == 'date_range':
+                return series.dt.strftime('%Y-%m-%d')
+            else:
+                return series.dt.strftime('%Y-%m-%dT%H:%M:%S')
+        except Exception as e:
+            self.logger.warning(f"Failed to format datetime for JSON for {series.name}: {e}")
+            return series.astype(str)
+
     def _convert_for_parquet(self, series: pd.Series, mapping: Dict[str, Any]) -> pd.Series:
-        """Convert for Parquet format - preserve numeric types, handle decimals properly"""
         col_type = mapping.get('type', '').lower()
         rule = mapping.get('rule', {})
         precision = mapping.get('precision')
-
         if col_type == 'int':
             return pd.to_numeric(series, errors='coerce').astype('Int64')
 
         elif col_type == 'float':
-            # Handle decimal precision if specified
             if precision is not None:
                 numeric_series = pd.to_numeric(series, errors='coerce')
                 return self._handle_decimal_precision(numeric_series, precision, 'parquet')
@@ -118,7 +209,6 @@ class DataOptimizer:
             return series.astype('boolean')  # Nullable boolean
 
         elif col_type == 'str':
-            # Handle length constraints for strings
             length = mapping.get('length')
             if isinstance(length, dict) and 'max' in length:
                 return series.astype(str).str.slice(0, length['max'])
@@ -130,16 +220,18 @@ class DataOptimizer:
         return series
 
     def _convert_for_excel(self, series: pd.Series, mapping: Dict[str, Any]) -> pd.Series:
-        """Convert for Excel format - handle Excel-specific limitations"""
         col_type = mapping.get('type', '').lower()
         rule = mapping.get('rule', {})
         precision = mapping.get('precision')
 
+        original_type = self._get_original_type(mapping)
+        if original_type and original_type.lower() in ['date', 'datetime', 'timestamp', 'time'] and col_type != 'str':
+            return self._convert_to_proper_datetime(series, rule, original_type)
+
         if col_type == 'int':
-            # Check for large integers that Excel can't handle
             numeric_series = pd.to_numeric(series, errors='coerce')
             max_val = numeric_series.max() if len(numeric_series) > 0 and numeric_series.notna().any() else 0
-            if max_val > 10 ** 15:  # Excel's safe integer limit
+            if max_val > 10 ** 15:
                 return series.astype(str)
             return numeric_series.astype('int64')
 
@@ -153,18 +245,24 @@ class DataOptimizer:
             return series.astype(bool)
 
         elif col_type == 'str':
-            # Handle datetime formatting for Excel
-            if self._is_datetime_rule(rule):
-                return self._format_datetime_for_excel(series, rule)
-            return series.astype(str)
+            length = mapping.get('length')
+            if isinstance(length, dict) and 'max' in length:
+                return series.astype(str).str.slice(0, length['max'])
+            elif isinstance(length, int):
+                return series.astype(str).str.slice(0, length)
+            else:
+                return series.astype(str)
 
         return series
 
     def _convert_for_csv(self, series: pd.Series, mapping: Dict[str, Any]) -> pd.Series:
-        """Convert for CSV format - string formatting with proper precision"""
         col_type = mapping.get('type', '').lower()
         rule = mapping.get('rule', {})
         precision = mapping.get('precision')
+
+        original_type = self._get_original_type(mapping)
+        if original_type and original_type.lower() in ['date', 'datetime', 'timestamp', 'time'] and col_type != 'str':
+            return self._format_datetime_as_string(series, rule, original_type)
 
         if col_type == 'int':
             return pd.to_numeric(series, errors='coerce').astype('Int64')
@@ -185,15 +283,47 @@ class DataOptimizer:
             return series.astype(str).str.lower()
 
         elif col_type == 'str':
-            # Handle datetime formatting
-            if self._is_datetime_rule(rule):
-                return self._format_datetime_with_rule(series, rule)
-            return series.astype(str)
+            length = mapping.get('length')
+            if isinstance(length, dict) and 'max' in length:
+                return series.astype(str).str.slice(0, length['max'])
+            elif isinstance(length, int):
+                return series.astype(str).str.slice(0, length)
+            else:
+                return series.astype(str)
 
         return series
 
+    def _format_datetime_as_string(self, series: pd.Series, rule: Dict, original_type: str) -> pd.Series:
+        try:
+            if self._is_numeric_timestamp(series):
+                converted = self._convert_numeric_timestamp(series)
+            else:
+                format_str = rule.get('format') if isinstance(rule, dict) else None
+                if format_str:
+                    converted = pd.to_datetime(series, format=format_str, errors='coerce')
+                else:
+                    converted = pd.to_datetime(series, errors='coerce')
+
+            if original_type.lower() == 'date':
+                return converted.dt.strftime('%Y-%m-%d')
+            elif original_type.lower() == 'time':
+                return converted.dt.strftime('%H:%M:%S')
+            elif original_type.lower() in ['datetime', 'timestamp']:
+                return converted.dt.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                rule_type = rule.get('type', '').lower() if isinstance(rule, dict) else ''
+                if rule_type == 'date_range':
+                    return converted.dt.strftime('%Y-%m-%d')
+                elif rule_type == 'time_range':
+                    return converted.dt.strftime('%H:%M:%S')
+                else:
+                    return converted.dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        except Exception as e:
+            self.logger.warning(f"Failed to format datetime as string for {series.name}: {e}")
+            return series.astype(str)
+
     def _convert_for_json(self, series: pd.Series, mapping: Dict[str, Any]) -> pd.Series:
-        """Convert for JSON format - JSON-compatible types"""
         col_type = mapping.get('type', '').lower()
         rule = mapping.get('rule', {})
 
@@ -208,15 +338,17 @@ class DataOptimizer:
             return series.astype(bool)
 
         elif col_type == 'str':
-            if self._is_datetime_rule(rule):
-                # Format datetime as ISO string for JSON
-                return self._format_datetime_for_json(series, rule)
-            return series.astype(str)
+            length = mapping.get('length')
+            if isinstance(length, dict) and 'max' in length:
+                return series.astype(str).str.slice(0, length['max'])
+            elif isinstance(length, int):
+                return series.astype(str).str.slice(0, length)
+            else:
+                return series.astype(str)
 
         return series
 
     def _convert_for_default(self, series: pd.Series, mapping: Dict[str, Any]) -> pd.Series:
-        """Default conversion - preserve original types as much as possible"""
         col_type = mapping.get('type', '').lower()
 
         if col_type == 'int':
@@ -229,14 +361,12 @@ class DataOptimizer:
             return series.astype(str)
 
     def _handle_decimal_precision(self, series: pd.Series, precision: int, format_type: str) -> pd.Series:
-        """Handle decimal precision based on format type"""
         if format_type == 'parquet':
-            # For Parquet, try to use PyArrow decimal if available
             try:
                 import pyarrow as pa
                 from decimal import Decimal
 
-                total_digits = 18  # Default
+                total_digits = 18
                 scale = precision
 
                 def to_decimal(value):
@@ -250,33 +380,43 @@ class DataOptimizer:
                 result = pa.table([decimal_array], names=[series.name]).to_pandas()[series.name]
                 return result
             except ImportError:
-                # Fallback to regular float with rounding
                 return series.round(precision)
         else:
-            # For other formats, round to specified precision
             return series.round(precision)
 
     def _is_datetime_rule(self, rule: Union[str, Dict]) -> bool:
-        """Check if rule indicates datetime data"""
         if isinstance(rule, dict):
             rule_type = rule.get('type', '').lower()
-            return rule_type in ['date_range', 'time_range', 'timestamp_range']
+            return rule_type in ['date_range', 'time_range', 'timestamp_range', 'date', 'time', 'timestamp']
         elif isinstance(rule, str):
             return rule.lower() in ['date', 'time', 'datetime', 'timestamp']
         return False
 
     def _format_datetime_with_rule(self, series: pd.Series, rule: Dict) -> pd.Series:
-        """Format datetime using rule specifications"""
         rule_type = rule.get('type', '').lower()
         format_str = rule.get('format')
         col_name = series.name
+        if self._is_numeric_timestamp(series):
+            try:
+                converted = self._convert_numeric_timestamp(series)
+                if format_str:
+                    return converted.dt.strftime(format_str)
+                elif rule_type == 'date_range':
+                    return converted.dt.strftime('%Y-%m-%d')
+                elif rule_type == 'time_range':
+                    return converted.dt.strftime('%H:%M:%S')
+                elif rule_type == 'timestamp_range':
+                    return converted.dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    return converted.dt.strftime('%Y-%m-%d %H:%M:%S')
 
+            except Exception as e:
+                self.logger.warning(f"Failed to convert numeric timestamp for {col_name}: {e}")
+                return series.astype(str)
         if format_str:
-            # Use the validated format from schema
             try:
                 converted = pd.to_datetime(series, format=format_str, errors='coerce')
 
-                # Format output based on rule type
                 if rule_type == 'date_range':
                     return converted.dt.strftime('%Y-%m-%d')
                 elif rule_type == 'time_range':
@@ -289,32 +429,151 @@ class DataOptimizer:
             except Exception as e:
                 self.logger.warning(f"Failed to format datetime for column {col_name}: {e}")
 
-        # Fallback to auto-detection
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            converted = pd.to_datetime(series, errors='coerce')
-
-        if rule_type == 'date_range':
-            return converted.dt.strftime('%Y-%m-%d')
-        elif rule_type == 'time_range':
-            return converted.dt.strftime('%H:%M:%S')
-        else:
-            return converted.dt.strftime('%Y-%m-%d %H:%M:%S')
-
-    def _format_datetime_for_excel(self, series: pd.Series, rule: Dict) -> pd.Series:
-        """Format datetime specifically for Excel"""
         try:
-            # Try to convert to pandas datetime for Excel
-            converted = pd.to_datetime(series, errors='coerce')
-            return converted
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                converted = pd.to_datetime(series, errors='coerce')
+
+            if rule_type == 'date_range':
+                return converted.dt.strftime('%Y-%m-%d')
+            elif rule_type == 'time_range':
+                return converted.dt.strftime('%H:%M:%S')
+            else:
+                return converted.dt.strftime('%Y-%m-%d %H:%M:%S')
         except:
-            return self._format_datetime_with_rule(series, rule)
+            return series.astype(str)
+
+    def _convert_to_proper_datetime(self, series: pd.Series, rule: Dict, original_type: str) -> pd.Series:
+        """Convert to proper datetime object for database compatibility"""
+        try:
+            if self._is_numeric_timestamp(series):
+                converted = self._convert_numeric_timestamp(series)
+                self.logger.debug(f"Converted numeric timestamp to datetime for column {series.name}")
+                return converted
+
+            format_str = rule.get('format') if isinstance(rule, dict) else None
+
+            if format_str:
+                try:
+                    converted = pd.to_datetime(series, format=format_str, errors='coerce')
+                    self.logger.debug(
+                        f"Converted to datetime using schema format {format_str} for column {series.name}")
+                    return converted
+                except Exception as e:
+                    self.logger.debug(f"Schema format {format_str} failed, trying auto-detection: {e}")
+
+            # Fallback to pandas auto-detection
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                converted = pd.to_datetime(series, errors='coerce')
+
+            self.logger.debug(f"Converted to datetime using auto-detection for column {series.name}")
+            return converted
+
+        except Exception as e:
+            self.logger.warning(f"Failed to convert to proper datetime for column {series.name}: {e}")
+            return series
+
+    def should_preserve_as_datetime(self, column_name: str) -> bool:
+        mapping = self.column_mappings.get(column_name, {})
+
+        original_type = self._get_original_type(mapping)
+        if original_type and original_type.lower() in ['date', 'datetime', 'timestamp', 'time']:
+            return True
+
+        col_type = mapping.get('type', '').lower()
+        if col_type in ['date', 'datetime', 'timestamp', 'time']:
+            return True
+
+        return False
+
+    def _is_numeric_timestamp(self, series: pd.Series) -> bool:
+        try:
+            numeric_series = pd.to_numeric(series, errors='coerce')
+            non_null_count = numeric_series.notna().sum()
+
+            if non_null_count == 0:
+                return False
+            sample_values = numeric_series.dropna().head(5)
+
+            for value in sample_values:
+                if self._is_reasonable_timestamp(value):
+                    return True
+
+            return False
+        except:
+            return False
+
+    def _is_reasonable_timestamp(self, value: float) -> bool:
+        if 1e8 <= value <= 3e9:  # Seconds (1973-2065)
+            return True
+        elif 1e11 <= value <= 3e12:  # Milliseconds
+            return True
+        elif 1e14 <= value <= 3e15:  # Microseconds
+            return True
+        elif 1e17 <= value <= 3e18:  # Nanoseconds
+            return True
+
+        return False
+
+    def _convert_numeric_timestamp(self, series: pd.Series) -> pd.Series:
+        numeric_series = pd.to_numeric(series, errors='coerce')
+        sample_values = numeric_series.dropna().head(5)
+
+        if len(sample_values) == 0:
+            return pd.to_datetime(series, errors='coerce')
+
+        sample_value = sample_values.iloc[0]
+
+        try:
+            if 1e8 <= sample_value <= 3e9:  # Seconds
+                self.logger.debug(f"Detected seconds timestamp: {sample_value}")
+                result = pd.to_datetime(numeric_series, unit='s', errors='coerce')
+            elif 1e11 <= sample_value <= 3e12:  # Milliseconds
+                self.logger.debug(f"Detected milliseconds timestamp: {sample_value}")
+                result = pd.to_datetime(numeric_series, unit='ms', errors='coerce')
+            elif 1e14 <= sample_value <= 3e15:  # Microseconds
+                self.logger.debug(f"Detected microseconds timestamp: {sample_value}")
+                result = pd.to_datetime(numeric_series, unit='us', errors='coerce')
+            elif 1e17 <= sample_value <= 3e18:  # Nanoseconds
+                self.logger.debug(f"Detected nanoseconds timestamp: {sample_value}")
+                result = pd.to_datetime(numeric_series, unit='ns', errors='coerce')
+            else:
+                self.logger.warning(f"Unknown timestamp format for value: {sample_value}")
+                result = pd.to_datetime(numeric_series, errors='coerce')
+
+            if result.notna().any():
+                self.logger.info(
+                    f"Successfully converted numeric timestamp {sample_value} to datetime: {result.dropna().iloc[0] if len(result.dropna()) > 0 else 'N/A'}")
+                return result
+            else:
+                self.logger.warning(f"Timestamp conversion resulted in all NaT values")
+                return pd.to_datetime(series, errors='coerce')
+
+        except Exception as e:
+            self.logger.warning(f"Failed to convert numeric timestamp: {e}")
+            return pd.to_datetime(series, errors='coerce')
+
+    def _is_date_type_column(self, mapping: Dict[str, Any]) -> bool:
+        corrections = mapping.get('corrections', [])
+        for correction in corrections:
+            if correction.get('field') == 'type':
+                old_value = correction.get('old_value', '').lower()
+                if old_value in ['date', 'datetime', 'timestamp', 'time']:
+                    return True
+        rule = mapping.get('rule', {})
+        return self._is_datetime_rule(rule)
 
     def _format_datetime_for_json(self, series: pd.Series, rule: Dict) -> pd.Series:
-        """Format datetime specifically for JSON (ISO format)"""
         rule_type = rule.get('type', '').lower()
+
         try:
-            converted = pd.to_datetime(series, errors='coerce')
+            # Check if we have numeric timestamps first
+            if self._is_numeric_timestamp(series):
+                converted = self._convert_numeric_timestamp(series)
+            else:
+                converted = pd.to_datetime(series, errors='coerce')
+
             if rule_type == 'date_range':
                 return converted.dt.strftime('%Y-%m-%d')
             else:
@@ -323,19 +582,15 @@ class DataOptimizer:
             return series.astype(str)
 
     def get_column_info(self, column_name: str) -> Dict[str, Any]:
-        """Get column information from validated schema"""
         return self.column_mappings.get(column_name, {})
 
     def has_mappings(self) -> bool:
-        """Check if column mappings are available"""
         return bool(self.column_mappings)
 
     def get_supported_formats(self) -> List[str]:
-        """Get list of supported output formats"""
         return ['parquet', 'excel', 'xlsx', 'xls', 'csv', 'tsv', 'json', 'jsonl']
 
     def get_validation_info(self, column_name: str) -> Dict[str, Any]:
-        """Get validation and correction information for a column"""
         mapping = self.column_mappings.get(column_name, {})
         return {
             'original_type': self._get_original_type(mapping),
@@ -348,7 +603,6 @@ class DataOptimizer:
         }
 
     def _get_original_type(self, mapping: Dict[str, Any]) -> Optional[str]:
-        """Extract original type before conversion from corrections"""
         corrections = mapping.get('corrections', [])
         for correction in corrections:
             if correction.get('field') == 'type' and correction.get('old_value'):
@@ -356,26 +610,24 @@ class DataOptimizer:
         return mapping.get('type')
 
     def get_conversion_summary(self) -> Dict[str, Any]:
-        """Get summary of all type conversions and optimizations"""
         summary = {
             'total_columns': len(self.column_mappings),
             'conversions': {},
             'constraints': {},
-            'datetime_columns': 0
+            'datetime_columns': 0,
+            'string_datetime_columns': 0
         }
 
         for col_name, mapping in self.column_mappings.items():
-            if '.' in col_name:  # Skip qualified names
+            if '.' in col_name:
                 continue
 
-            # Count conversions
             original_type = self._get_original_type(mapping)
             current_type = mapping.get('type')
             if original_type and original_type != current_type:
                 conversion_key = f"{original_type} -> {current_type}"
                 summary['conversions'][conversion_key] = summary['conversions'].get(conversion_key, 0) + 1
 
-            # Count constraints
             if mapping.get('length'):
                 summary['constraints']['length'] = summary['constraints'].get('length', 0) + 1
             if mapping.get('precision'):
@@ -383,9 +635,11 @@ class DataOptimizer:
             if mapping.get('constraint'):
                 summary['constraints']['database'] = summary['constraints'].get('database', 0) + 1
 
-            # Count datetime columns
             rule = mapping.get('rule', {})
             if self._is_datetime_rule(rule):
-                summary['datetime_columns'] += 1
+                if current_type == 'str':
+                    summary['string_datetime_columns'] += 1
+                else:
+                    summary['datetime_columns'] += 1
 
         return summary
