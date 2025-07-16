@@ -847,6 +847,15 @@ class ConfigurationManager:
         # Load raw configuration
         raw_config = self._load_config(config_path)
 
+        # for exporting the excel/csv config to json
+        if kwargs.get('save_config', False) and not config_path.suffix in ['.json', '.jsonl']:
+            path = os.path.dirname(raw_config['output']['directory'])
+            output_file_name = f'generated_config_from_{config_path.suffix.replace('.', '')}.json'
+            output_file_path = os.path.join(path, output_file_name)
+            self.logger.info(f"Saving new generated config in file: {output_file_path}")
+            self._save_json(raw_config, Path(output_file_path))
+            exit(0)
+
         # Apply argument overrides BEFORE parsing
         raw_config = self._apply_argument_overrides(
             raw_config,
@@ -855,6 +864,7 @@ class ConfigurationManager:
 
         raw_config = self.schema_validator.validate_schema(raw_config)
 
+        # for exporting the modified JSON (i.e., sql datatypes to python data types)
         if kwargs.get('save_config', False):
             path = os.path.dirname(raw_config['output']['directory'])
             output_file_name = 'generated_config.json'
@@ -1318,7 +1328,7 @@ class ConfigurationManager:
         for error in errors:
             self.logger.error(f"  - {error}")
 
-    def _load_config(self, config_path: Path, rows: int = None) -> Union[dict, None]:
+    def _load_config(self, config_path: Path, args: dict = None) -> Union[dict, None]:
         """Load JSON configuration file"""
         try:
             config_reader = ConfigReader(config_path)

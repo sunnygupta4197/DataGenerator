@@ -78,12 +78,11 @@
                 },
                 {
                     "name": "date_of_birth",
-                    "type": "str",
+                    "type": "date",
                     "nullable": true,
                     "rule": {
                         "type": "date_range",
-                        "start": "1950-01-01",
-                        "format": "YYYY-MM"
+                        "start": "1950-01-01"
                     }
                 },
                 {
@@ -231,7 +230,7 @@
         },
         {
           "name": "shipping_cost",
-          "type": "float",
+          "type": "decimal(10,2)",
           "nullable": false,
           "rule": {
             "type": "range",
