@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
 from datetime import datetime
@@ -728,60 +729,6 @@ class GenerationConfig:
             config_dict["ai"] = ai_dict
 
         return config_dict
-
-
-
-import json
-import re
-from typing import Dict, Any, Union
-
-class CustomJSONEncoder(json.JSONEncoder):
-    """Custom JSON encoder that handles regex patterns properly"""
-    
-    def default(self, obj):
-        if hasattr(obj, '__dict__'):
-            return obj.__dict__
-        return super().default(obj)
-    
-    def encode(self, obj):
-        """Override encode to handle regex patterns"""
-        # First do normal encoding
-        json_str = super().encode(obj)
-        
-        # Then fix double-escaped backslashes in regex patterns
-        # This pattern looks for regex-like strings with double backslashes
-        # and converts them back to single backslashes
-        json_str = self._fix_regex_patterns(json_str)
-        
-        return json_str
-    
-    def _fix_regex_patterns(self, json_str: str) -> str:
-        """Fix double-escaped backslashes in regex patterns"""
-        # Common regex patterns that get double-escaped
-        patterns_to_fix = [
-            r'\\\\d',  # \\d -> \d
-            r'\\\\w',  # \\w -> \w  
-            r'\\\\s',  # \\s -> \s
-            r'\\\\.',  # \\. -> \.
-            r'\\\\+',  # \\+ -> \+
-            r'\\\\*',  # \\* -> \*
-            r'\\\\?',  # \\? -> \?
-            r'\\\\^',  # \\^ -> \^
-            r'\\\\$',  # \\$ -> \$
-            r'\\\\[',  # \\[ -> \[
-            r'\\\\]',  # \\] -> \]
-            r'\\\\{',  # \\{ -> \{
-            r'\\\\}',  # \\} -> \}
-            r'\\\\(',  # \\( -> \(
-            r'\\\\)',  # \\) -> \)
-            r'\\\\|',  # \\| -> \|
-        ]
-        
-        for pattern in patterns_to_fix:
-            # Replace double backslashes with single backslashes for regex patterns
-            json_str = json_str.replace(pattern, pattern[2:])  # Remove first two backslashes
-        
-        return json_str
 
 
 class ConfigurationManager:
@@ -1582,8 +1529,29 @@ class ConfigurationManager:
         """Save configuration as JSON"""
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        json_str = json.dumps(config_dict, indent=4, ensure_ascii=False)
+
+        target_backslashes = self._auto_detect_backslashes(json_str)
+
+        replacement = r'\\' * target_backslashes + r'\1'
+        print(replacement, '\\' * target_backslashes, target_backslashes)
+        json_str = re.sub(r'\\{2,}([dwsWSDB\.\+\*\?\^\$\[\]\{\}\(\)\|nrtbAZz])', replacement, json_str)
+
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(config_dict, f, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
+            f.write(json_str)
+
+    def _auto_detect_backslashes(seld, json_str: str) -> int:
+        patterns = {
+            8: len(re.findall(r'\\{8,}[dwsWSDB\.\+\*\?\^\$\[\]\{\}\(\)\|nrtbAZz]', json_str)),
+            6: len(re.findall(r'\\{6,7}[dwsWSDB\.\+\*\?\^\$\[\]\{\}\(\)\|nrtbAZz]', json_str)),
+            4: len(re.findall(r'\\{4,5}[dwsWSDB\.\+\*\?\^\$\[\]\{\}\(\)\|nrtbAZz]', json_str)),
+            2: len(re.findall(r'\\{2,3}[dwsWSDB\.\+\*\?\^\$\[\]\{\}\(\)\|nrtbAZz]', json_str)),
+            1: len(re.findall(r'\\{1}[dwsWSDB\.\+\*\?\^\$\[\]\{\}\(\)\|nrtbAZz]', json_str)),
+        }
+        max_backslashes = max([k for k, v in patterns.items() if v > 0], default=2)
+
+        result = {8: 2, 6: 2, 4: 2, 2: 1, 1: 1}
+        return result.get(max_backslashes, 1)
 
     # ===================== CONFIGURATION UTILITIES =====================
 
