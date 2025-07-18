@@ -730,6 +730,60 @@ class GenerationConfig:
         return config_dict
 
 
+
+import json
+import re
+from typing import Dict, Any, Union
+
+class CustomJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles regex patterns properly"""
+    
+    def default(self, obj):
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        return super().default(obj)
+    
+    def encode(self, obj):
+        """Override encode to handle regex patterns"""
+        # First do normal encoding
+        json_str = super().encode(obj)
+        
+        # Then fix double-escaped backslashes in regex patterns
+        # This pattern looks for regex-like strings with double backslashes
+        # and converts them back to single backslashes
+        json_str = self._fix_regex_patterns(json_str)
+        
+        return json_str
+    
+    def _fix_regex_patterns(self, json_str: str) -> str:
+        """Fix double-escaped backslashes in regex patterns"""
+        # Common regex patterns that get double-escaped
+        patterns_to_fix = [
+            r'\\\\d',  # \\d -> \d
+            r'\\\\w',  # \\w -> \w  
+            r'\\\\s',  # \\s -> \s
+            r'\\\\.',  # \\. -> \.
+            r'\\\\+',  # \\+ -> \+
+            r'\\\\*',  # \\* -> \*
+            r'\\\\?',  # \\? -> \?
+            r'\\\\^',  # \\^ -> \^
+            r'\\\\$',  # \\$ -> \$
+            r'\\\\[',  # \\[ -> \[
+            r'\\\\]',  # \\] -> \]
+            r'\\\\{',  # \\{ -> \{
+            r'\\\\}',  # \\} -> \}
+            r'\\\\(',  # \\( -> \(
+            r'\\\\)',  # \\) -> \)
+            r'\\\\|',  # \\| -> \|
+        ]
+        
+        for pattern in patterns_to_fix:
+            # Replace double backslashes with single backslashes for regex patterns
+            json_str = json_str.replace(pattern, pattern[2:])  # Remove first two backslashes
+        
+        return json_str
+
+
 class ConfigurationManager:
     """
     Enhanced configuration management with multi-AI provider support,
@@ -1529,7 +1583,7 @@ class ConfigurationManager:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(config_dict, f, indent=2, ensure_ascii=False)
+            json.dump(config_dict, f, indent=2, ensure_ascii=False, cls=CustomJSONEncoder)
 
     # ===================== CONFIGURATION UTILITIES =====================
 
