@@ -853,7 +853,7 @@ class ConfigurationManager:
         # for exporting the excel/csv config to json
         if kwargs.get('save_config', False) and not config_path.suffix in ['.json', '.jsonl']:
             path = os.path.dirname(raw_config['output']['directory'])
-            output_file_name = f'generated_config_from_{config_path.suffix.replace('.', '')}.json'
+            output_file_name = f"generated_config_from_{config_path.suffix.replace('.', '')}.json"
             output_file_path = os.path.join(path, output_file_name)
             self.logger.info(f"Saving new generated config in file: {output_file_path}")
             self._save_json(raw_config, Path(output_file_path))
