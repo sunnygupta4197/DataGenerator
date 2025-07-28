@@ -1154,8 +1154,6 @@ Features:
     # Performance arguments
     parser.add_argument('--max_workers', '-w', type=int,
                         help='Maximum number of worker threads/processes')
-    parser.add_argument('--max_memory', '-m', type=int,
-                        help='Maximum memory usage in MB')
     parser.add_argument('--batch_size', '-b', type=int,
                         help='Batch size for processing')
 
