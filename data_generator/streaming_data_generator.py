@@ -88,38 +88,33 @@ class ParallelDataGenerator:
     sophisticated ValueGenerator, ConstraintManager, and validation systems
     """
 
-    def __init__(self, data_generator_instance,
-                 max_workers: int = None, max_memory_mb: int = 1000,
-                 enable_streaming: bool = True, performance_profiler=None, logger=None):
+    def __init__(self, data_generator_instance, performance_profiler=None, logger=None):
         """
         Initialize with the main DataGenerator instance to access all sophisticated components
 
         Args:
             data_generator_instance: Instance of the main DataGenerator class
-            max_workers: Maximum number of parallel workers
-            max_memory_mb: Maximum memory usage before cleanup
-            enable_streaming: Enable streaming mode for large datasets
             logger: Logger instance
         """
         self.streaming_used = None
         self.data_generator = data_generator_instance
         self.output_config = data_generator_instance.config.output
         self.logger = logger or logging.getLogger(__name__)
-        self.enable_streaming = enable_streaming
+        self.enable_streaming = data_generator_instance.config.performance.enable_streaming
         self.performance_profiler = performance_profiler if performance_profiler else PerformanceProfiler(logger=logger)
 
         # Parallel processing setup
-        self.max_workers = max_workers or min(4, os.cpu_count())
+        self.max_workers = data_generator_instance.config.performance.max_workers or min(4, os.cpu_count())
         self.thread_pool = ThreadPoolExecutor(max_workers=self.max_workers)
         self.process_pool = None  # Created when needed
 
         # Memory management
-        self.memory_monitor = MemoryMonitor(max_memory_mb)
+        self.memory_monitor = MemoryMonitor(data_generator_instance.config.performance.max_memory_mb)
         self.memory_monitor.add_cleanup_callback(self._cleanup_memory)
 
         # Performance settings
-        self.default_batch_size = 10000
-        self.streaming_batch_size = 1000
+        self.default_batch_size = data_generator_instance.config.performance.batch_size
+        self.streaming_batch_size = data_generator_instance.config.performance.streaming_batch_size
         self.max_queue_size = 100
 
         # Statistics

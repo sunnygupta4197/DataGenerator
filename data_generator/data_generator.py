@@ -1,3 +1,4 @@
+import os
 import re
 import math
 import random
@@ -546,10 +547,23 @@ class DataGenerator:
         self.faker = Faker(locale) if locale else Faker()
         self.validator = Validator(logger=self.logger)
 
-        performance_config = getattr(config, "performance_config", None)
-        max_memory_mb = performance_config.get("max_memory_mb", 500) if performance_config else 500
-        enable_parallel = getattr(performance_config, "enable_parallel", False) if performance_config else True
-        self.constraint_manager = ConstraintManager(logger=self.logger, max_memory_mb=max_memory_mb, enable_parallel=enable_parallel)
+        max_memory_mb = min(
+            self.config.performance.max_memory_mb,
+            500
+        )
+
+        max_workers = min(
+            self.config.performance.max_workers,
+            os.cpu_count() * 2
+        )
+
+        batch_size = min(
+            self.config.performance.batch_size,
+            1000
+        )
+
+        enable_parallel = self.config.performance.enable_parallel
+        self.constraint_manager = ConstraintManager(logger=self.logger, max_memory_mb=max_memory_mb, batch_size=batch_size, max_workers=max_workers, enable_parallel=enable_parallel)
 
         # Initialize helper classes
         self.converter = DataTypeConverter(self.logger)

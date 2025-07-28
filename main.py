@@ -295,6 +295,8 @@ class OptimizedDataGenerationEngine:
             return ConstraintManager(
                 logger=self.logger,
                 max_memory_mb=self.config.performance.max_memory_mb,
+                max_workers=self.config.performance.max_workers,
+                batch_size=self.config.performance.batch_size,
                 enable_parallel=self.config.performance.enable_parallel
             )
 
@@ -348,16 +350,8 @@ class OptimizedDataGenerationEngine:
 
     def _create_optimized_parallel_generator(self):
         """Create optimized parallel generator"""
-        optimal_workers = min(
-            self.config.performance.max_workers,
-            os.cpu_count() * 2
-        )
-
         return ParallelDataGenerator(
             data_generator_instance=self.data_generator,
-            max_workers=optimal_workers,
-            max_memory_mb=self.config.performance.max_memory_mb,
-            enable_streaming=self.config.performance.enable_streaming,
             performance_profiler=self.performance_profiler,
             logger=self.logger
         )
@@ -1020,11 +1014,11 @@ class OptimizedDataGenerationOrchestrator:
         self.logger.info("=" * 80)
 
 
-def main(config: GenerationConfig, total_records: int = None) -> Dict[str, List]:
+def main(config: GenerationConfig, total_records: int = None, logger=None) -> Dict[str, List]:
     """
     Main function using the optimized data generator with complete feature set
     """
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(__name__) if logger is None else logger
 
     actual_total_records = total_records or config.rows
 
@@ -1108,7 +1102,7 @@ def setup_logging_with_fallback(config: GenerationConfig = None, log_level: str 
     logging.getLogger('faker').setLevel(logging.WARNING)
     logging.getLogger('pandas').setLevel(logging.WARNING)
 
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger('DataGeneratorApp')
     if config:
         logger.info("📋 Configuration-based logging applied")
     else:
@@ -1156,9 +1150,6 @@ Features:
                         help='Output directory for generated files')
     parser.add_argument('--rows', '-r', type=int,
                         help='Number of rows to generate per table')
-    parser.add_argument('--environment', '-e',
-                        choices=['development', 'testing', 'production'],
-                        help='Environment configuration to use')
 
     # Performance arguments
     parser.add_argument('--max_workers', '-w', type=int,
@@ -1197,28 +1188,9 @@ Features:
     # Advanced options
     parser.add_argument('--encryption_key',
                         help='Encryption key for sensitive data (32 bytes)')
-    parser.add_argument('--profile_performance', action='store_true',
-                        help='Enable detailed performance profiling')
-    parser.add_argument('--strict_validation', action='store_true',
-                        help='Enable strict validation mode')
     parser.add_argument('--log_level',
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                         help='Logging level', default='INFO')
-
-    # AI Integration arguments
-    parser.add_argument('--ai_enabled', action='store_true',
-                        help='Enable AI integration')
-    parser.add_argument('--openai_enabled', action='store_true',
-                        help='Enable OpenAI integration')
-    parser.add_argument('--mistral_enabled', action='store_true',
-                        help='Enable Mistral AI integration')
-    parser.add_argument('--ai_primary_provider',
-                        choices=['openai', 'mistral'],
-                        help='Primary AI provider')
-    parser.add_argument('--openai_model',
-                        help='OpenAI model name (e.g., gpt-4, gpt-3.5-turbo)')
-    parser.add_argument('--mistral_model',
-                        help='Mistral model name (e.g., mistral-large, mistral-medium)')
 
     return parser.parse_args()
 
@@ -1292,7 +1264,8 @@ if __name__ == "__main__":
 
         generated_data = main(
             config=config,
-            total_records=config.rows
+            total_records=config.rows,
+            logger=logger
         )
 
         # Calculate and log execution time

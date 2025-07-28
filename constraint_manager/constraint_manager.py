@@ -122,7 +122,7 @@ class ConstraintManager:
     Enhanced constraint manager with all methods required by DataGenerator and BatchGenerator
     """
 
-    def __init__(self, logger=None, max_memory_mb: int = 500, enable_parallel: bool = True):
+    def __init__(self, logger=None, max_memory_mb: int = 500, max_workers=4, batch_size=1000, enable_parallel: bool = True):
         self.logger = logger or logging.getLogger(__name__)
         self.enable_parallel = enable_parallel
         self._lock = threading.RLock()
@@ -147,11 +147,11 @@ class ConstraintManager:
         self._one_to_many_distribution = defaultdict(dict)
 
         # Performance settings
-        self._batch_fk_refresh_threshold = 10000
-        self._parallel_batch_size = 1000
+        self._batch_fk_refresh_threshold = batch_size * 10
+        self._parallel_batch_size = batch_size
 
         # Thread pool for parallel operations
-        self._thread_pool = ThreadPoolExecutor(max_workers=4) if enable_parallel else None
+        self._thread_pool = ThreadPoolExecutor(max_workers=max_workers) if enable_parallel else None
 
         # Statistics tracking
         self._stats = {

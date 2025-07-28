@@ -49,8 +49,8 @@ class PerformanceConfig:
     batch_size: int = 10000
     streaming_batch_size: int = 1000
     max_memory_mb: int = 1000
-    enable_parallel: bool = True
-    enable_streaming: bool = True
+    enable_parallel: bool = False
+    enable_streaming: bool = False
     cache_size_limit: int = 50000
     use_processes: bool = False
     optimization_level: str = "balanced"
@@ -66,6 +66,8 @@ class PerformanceConfig:
             self.batch_size = 100
         elif self.batch_size > 1000000:
             self.batch_size = 1000000
+
+        self.streaming_batch_size = self.batch_size // 10
 
         if self.max_memory_mb < 100:
             self.max_memory_mb = 100
@@ -526,9 +528,9 @@ class ValidationConfig:
     """Validation configuration"""
     strict_mode: bool = False
     max_validation_errors: int = 100
-    enable_business_rules: bool = True
-    enable_data_quality_analysis: bool = True
-    enable_anomaly_detection: bool = True
+    enable_business_rules: bool = False
+    enable_data_quality_analysis: bool = False
+    enable_anomaly_detection: bool = False
     quality_threshold: float = 0.8
     business_rules: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -956,9 +958,9 @@ class ConfigurationManager:
         feature_mapping = {
             'enable_parallel': 'parallel',
             'enable_streaming': 'streaming',
-            'enable_data_masking': 'data_masking',
+            'enable_masking': 'data_masking',
             'enable_encryption': 'encryption',
-            'enable_data_quality_analysis': 'quality_analysis',
+            'enable_quality_analysis': 'quality_analysis',
             'enable_anomaly_detection': 'anomaly_detection',
             'enable_business_rules': 'business_rules',
             'enable_audit_logging': 'audit_logging',
@@ -981,9 +983,9 @@ class ConfigurationManager:
         features_to_disable = []
 
         feature_mapping = {
-            'enable_data_masking': 'data_masking',
+            'enable_masking': 'data_masking',
             'enable_encryption': 'encryption',
-            'enable_data_quality_analysis': 'quality_analysis',
+            'enable_quality_analysis': 'quality_analysis',
             'enable_anomaly_detection': 'anomaly_detection',
             'enable_business_rules': 'business_rules',
             'enable_audit_logging': 'audit_logging',
@@ -1030,6 +1032,27 @@ class ConfigurationManager:
             config['rows'] = overrides['rows']
             applied_overrides.append(f"rows: {old_value} → {overrides['rows']}")
 
+        if overrides.get('batch_size') is not None:
+            if 'performance' not in config:
+                config['performance'] = {}
+            old_value = config['performance'].get('batch_size', 'not set')
+            config['performance']['batch_size'] = overrides['batch_size']
+            applied_overrides.append(f"performance.batch_size: {old_value} → {overrides['batch_size']}")
+
+        if overrides.get('max_workers') is not None:
+            if 'performance' not in config:
+                config['performance'] = {}
+            old_value = config['performance'].get('max_workers', 'not set')
+            config['performance']['max_workers'] = overrides['max_workers']
+            applied_overrides.append(f"performance.max_workers: {old_value} → {overrides['max_workers']}")
+
+        if overrides.get('max_memory') is not None:
+            if 'performance' not in config:
+                config['performance'] = {}
+            old_value = config['performance'].get('max_memory_mb', 'not set')
+            config['performance']['max_memory_mb'] = overrides['max_memory']
+            applied_overrides.append(f"performance.max_memory_mb: {old_value} → {overrides['max_memory']}")
+
         if overrides.get('output_format') is not None:
             if 'output' not in config:
                 config['output'] = {}
@@ -1052,6 +1075,21 @@ class ConfigurationManager:
             config['output']['directory'] = overrides['output_dir']
             config['output']['report_directory'] = os.path.join(overrides['output_dir'], 'reports')
             applied_overrides.append(f"output.directory: {old_value} → {overrides['output_dir']}")
+
+        if overrides.get('compression') is not None:
+            if 'output' not in config:
+                config['output'] = {}
+            old_value = config['output'].get('compression', 'not set')
+            config['output']['compression'] = overrides['compression']
+            applied_overrides.append(f"output.compression: {old_value} → {overrides['compression']}")
+
+        if overrides.get('encryption_key') is not None:
+            if 'security' not in config:
+                config['security'] = {}
+            old_value = config['security'].get('encryption_key', 'not set')
+            config['security']['encryption_key'] = overrides['encryption_key']
+            config['security']['enable_encryption'] = True
+            applied_overrides.append(f"security.encryption_key: {old_value} → {overrides['encryption_key']}")
 
         return applied_overrides
 
@@ -1359,7 +1397,7 @@ class ConfigurationManager:
                 valid_params = {
                     'enable_data_masking', 'enable_encryption', 'audit_enabled',
                     'masking_rules', 'sensitivity', 'sensitivity_map', 'encrypt_fields',
-                    'auto_detect_pii', 'strict_mode', 'compliance_profile'
+                    'auto_detect_pii', 'strict_mode', 'compliance_profile', 'encryption_key'
                 }
                 filtered_security = {k: v for k, v in security_data.items() if k in valid_params}
                 nested_configs['security'] = SecurityConfig(**filtered_security)
