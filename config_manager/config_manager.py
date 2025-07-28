@@ -69,8 +69,8 @@ class PerformanceConfig:
 
         self.streaming_batch_size = self.batch_size // 10
 
-        if self.max_memory_mb < 100:
-            self.max_memory_mb = 100
+        if self.max_memory_mb < 500:
+            self.max_memory_mb = 500
 
 
 @dataclass
